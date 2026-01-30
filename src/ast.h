@@ -157,6 +157,7 @@ struct Node {
         struct { NodeList declarations; } program;
 
         struct {
+            bool is_export;
             char* module_path;
             size_t module_path_size;
             ImportNameList names;

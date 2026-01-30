@@ -988,9 +988,16 @@ static Node* parse_import_decl(Parser* p) {
 
     size_t path_size = (size_t)(path_end - path_start);
 
-    expect(p, TOKEN_IMPORT, "Expected 'import' after module path.");
+    bool is_export = false;
+    if (check(p, TOKEN_EXPORT)) {
+        advance(p);
+        is_export = true;
+    } else {
+        expect(p, TOKEN_IMPORT, "Expected 'import' or 'export' after module path.");
+    }
 
     Node* node = make_node(p, NODE_IMPORT_DECL, tok);
+    node->as.import_decl.is_export = is_export;
     node->as.import_decl.module_path = path_start;
     node->as.import_decl.module_path_size = path_size;
     memset(&node->as.import_decl.names, 0, sizeof(ImportNameList));
@@ -1169,9 +1176,10 @@ void ast_print(Node* node, int indent) {
         break;
 
     case NODE_IMPORT_DECL:
-        printf("ImportDecl [%zu:%zu] from %.*s import",
+        printf("ImportDecl [%zu:%zu] from %.*s %s",
                node->line, node->column,
-               (int)node->as.import_decl.module_path_size, node->as.import_decl.module_path);
+               (int)node->as.import_decl.module_path_size, node->as.import_decl.module_path,
+               node->as.import_decl.is_export ? "export" : "import");
         for (size_t i = 0; i < node->as.import_decl.names.count; i++) {
             ImportName* name = &node->as.import_decl.names.names[i];
             printf("%s%.*s", i > 0 ? ", " : " ", (int)name->name_size, name->name);
