@@ -128,8 +128,8 @@ int main(int argc, char** argv) {
 
         printf("package: %s\n", pkg.name);
         printf("modules: %d\n", graph.count);
-        for (int i = 0; i < graph.count; i++) {
-            printf("  %s (%s)\n", graph.modules[i].name, graph.modules[i].path);
+        for (Module* m = graph.first; m; m = m->next) {
+            printf("  %s (%s)\n", m->name, m->path);
         }
 
         for (Error* error = errors.first; error; error = error->next) {

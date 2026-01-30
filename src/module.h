@@ -8,6 +8,7 @@
 #include <stdbool.h>
 
 typedef struct Module {
+    struct Module* next;
     char* name;
     char* path;
     Node* ast;
@@ -17,9 +18,9 @@ typedef struct ModuleGraph {
     Arena* arena;
     Errors* errors;
     char* src_dir;
-    Module* modules;
+    Module* first;
+    Module* last;
     int count;
-    int capacity;
 } ModuleGraph;
 
 void module_graph_init(ModuleGraph* graph, Arena* arena, Errors* errors, char* src_dir);

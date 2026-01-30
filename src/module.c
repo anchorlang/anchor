@@ -10,31 +10,34 @@ void module_graph_init(ModuleGraph* graph, Arena* arena, Errors* errors, char* s
     graph->arena = arena;
     graph->errors = errors;
     graph->src_dir = src_dir;
-    graph->modules = NULL;
+    graph->first = NULL;
+    graph->last = NULL;
     graph->count = 0;
-    graph->capacity = 0;
 }
 
 Module* module_find(ModuleGraph* graph, char* path) {
-    for (int i = 0; i < graph->count; i++) {
-        if (strcmp(graph->modules[i].path, path) == 0) {
-            return &graph->modules[i];
+    for (Module* m = graph->first; m; m = m->next) {
+        if (strcmp(m->path, path) == 0) {
+            return m;
         }
     }
     return NULL;
 }
 
-static void module_graph_push(ModuleGraph* graph, Module module) {
-    if (graph->count >= graph->capacity) {
-        int new_cap = graph->capacity == 0 ? 8 : graph->capacity * 2;
-        Module* new_modules = arena_alloc(graph->arena, sizeof(Module) * new_cap);
-        if (graph->modules) {
-            memcpy(new_modules, graph->modules, sizeof(Module) * graph->count);
-        }
-        graph->modules = new_modules;
-        graph->capacity = new_cap;
+static Module* module_graph_add(ModuleGraph* graph) {
+    Module* m = arena_alloc(graph->arena, sizeof(Module));
+    m->next = NULL;
+    m->name = NULL;
+    m->path = NULL;
+    m->ast = NULL;
+    if (!graph->first) {
+        graph->first = m;
+    } else {
+        graph->last->next = m;
     }
-    graph->modules[graph->count++] = module;
+    graph->last = m;
+    graph->count++;
+    return m;
 }
 
 static char* build_file_path(Arena* arena, char* src_dir, char* module_path, size_t module_path_size) {
@@ -109,17 +112,15 @@ Module* module_resolve(ModuleGraph* graph, char* module_path, size_t module_path
     Node* ast = parser_parse(graph->arena, &tokens, graph->errors);
 
     // add to graph before resolving imports (handles circular imports)
-    Module module;
-    module.name = extract_module_name(graph->arena, module_path, module_path_size);
-    module.path = file_path;
-    module.ast = ast;
-    module_graph_push(graph, module);
+    Module* module = module_graph_add(graph);
+    module->name = extract_module_name(graph->arena, module_path, module_path_size);
+    module->path = file_path;
+    module->ast = ast;
 
     // resolve imports recursively
     if (ast) {
         resolve_imports(graph, ast);
     }
 
-    // return pointer to the module in the array
-    return &graph->modules[graph->count - 1];
+    return module;
 }
