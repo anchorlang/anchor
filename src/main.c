@@ -1,6 +1,7 @@
 #include "arena.h"
 #include "lexer.h"
 #include "parser.h"
+#include "package.h"
 #include "fs.h"
 #include "error.h"
 
@@ -88,6 +89,31 @@ int main(int argc, char** argv) {
 
         arena_free(&arena);
         return errors.count > 0 ? EXIT_FAILURE : EXIT_SUCCESS;
+    }
+
+    if (strcmp(argv[1], "build") == 0) {
+        char* dir = argc >= 3 ? argv[2] : ".";
+
+        Arena arena;
+        arena_init(&arena, 16 * 1024 * 1024);
+
+        Errors errors;
+        errors_init(&arena, &errors);
+
+        Package pkg;
+        if (!package_load(&arena, &errors, &pkg, dir)) {
+            for (Error* error = errors.first; error; error = error->next) {
+                fprintf(stderr, "error: %s\n", error->message);
+            }
+            arena_free(&arena);
+            return EXIT_FAILURE;
+        }
+
+        printf("name: %s\n", pkg.name);
+        printf("entry: %s\n", pkg.entry);
+
+        arena_free(&arena);
+        return EXIT_SUCCESS;
     }
 
     fprintf(stderr, "Error: Unknown command '%s'.\n", argv[1]);
