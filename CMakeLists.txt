@@ -13,6 +13,7 @@ add_executable (ancc
     "src/fs.c"
     "src/lexer.c"
     "src/main.c"
+    "src/module.c"
     "src/package.c"
     "src/parser.c"
 )

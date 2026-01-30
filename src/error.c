@@ -37,4 +37,5 @@ void errors_push(Errors* errors, Severity severity, size_t offset, size_t line, 
     }
 
     errors->last = error;
+    errors->count++;
 }

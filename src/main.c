@@ -1,6 +1,7 @@
 #include "arena.h"
 #include "lexer.h"
 #include "parser.h"
+#include "module.h"
 #include "package.h"
 #include "fs.h"
 #include "error.h"
@@ -109,11 +110,34 @@ int main(int argc, char** argv) {
             return EXIT_FAILURE;
         }
 
-        printf("name: %s\n", pkg.name);
-        printf("entry: %s\n", pkg.entry);
+        char src_dir[1024];
+        snprintf(src_dir, sizeof(src_dir), "%s/src", dir);
+
+        ModuleGraph graph;
+        module_graph_init(&graph, &arena, &errors, src_dir);
+
+        size_t entry_len = strlen(pkg.entry);
+        Module* entry = module_resolve(&graph, pkg.entry, entry_len);
+        if (!entry) {
+            for (Error* error = errors.first; error; error = error->next) {
+                fprintf(stderr, "error: %s\n", error->message);
+            }
+            arena_free(&arena);
+            return EXIT_FAILURE;
+        }
+
+        printf("package: %s\n", pkg.name);
+        printf("modules: %d\n", graph.count);
+        for (int i = 0; i < graph.count; i++) {
+            printf("  %s (%s)\n", graph.modules[i].name, graph.modules[i].path);
+        }
+
+        for (Error* error = errors.first; error; error = error->next) {
+            fprintf(stderr, "%zu:%zu: %s\n", error->line, error->column, error->message);
+        }
 
         arena_free(&arena);
-        return EXIT_SUCCESS;
+        return errors.count > 0 ? EXIT_FAILURE : EXIT_SUCCESS;
     }
 
     fprintf(stderr, "Error: Unknown command '%s'.\n", argv[1]);
