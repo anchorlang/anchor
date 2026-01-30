@@ -31,7 +31,8 @@ int main(int argc, char** argv) {
         Arena arena;
         arena_init(&arena, 16 * 1024 * 1024);
 
-        char* buffer = file_read(&arena, argv[2]);
+        size_t buffer_size;
+        char* buffer = file_read(&arena, argv[2], &buffer_size);
         if (!buffer) {
             fprintf(stderr, "Error: File not found '%s'.\n", argv[2]);
             arena_free(&arena);
@@ -42,10 +43,16 @@ int main(int argc, char** argv) {
         errors_init(&arena, &errors);
 
         Tokens tokens;
-        lexer_tokenize(&arena, &tokens, &errors, buffer);
+        lexer_tokenize(&arena, &tokens, &errors, buffer, buffer_size);
+
+        lexer_print(&tokens);
+
+        for (Error* error = errors.first; error; error = error->next) {
+            fprintf(stderr, "%zu:%zu: %s\n", error->line, error->column, error->message);
+        }
 
         arena_free(&arena);
-        return EXIT_SUCCESS;
+        return errors.count > 0 ? EXIT_FAILURE : EXIT_SUCCESS;
     }
 
     fprintf(stderr, "Error: Unknown command '%s'.\n", argv[1]);

@@ -29,7 +29,7 @@ bool file_exists(char* path) {
 }
 #endif
 
-char* file_read(Arena* arena, char* path) {
+char* file_read(Arena* arena, char* path, size_t* out_size) {
     FILE* file = fopen(path, "rb");
     if (!file) {
         return NULL;
@@ -44,5 +44,8 @@ char* file_read(Arena* arena, char* path) {
     data[size] = '\0';
 
     fclose(file);
+    if (out_size) {
+        *out_size = size;
+    }
     return data;
 }

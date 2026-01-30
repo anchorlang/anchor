@@ -6,9 +6,10 @@
 
 #include <stddef.h>
 
-typedef enum Token {
+typedef enum TokenType {
     // literals
-    TOKEN_INTTEGER_LITERAL,
+    TOKEN_INTEGER_LITERAL,
+    TOKEN_FLOAT_LITERAL,
     TOKEN_STRING_LITERAL,
 
     // identifier
@@ -18,12 +19,34 @@ typedef enum Token {
     TOKEN_FUNC,
     TOKEN_RETURN,
     TOKEN_END,
+    TOKEN_CONST,
+    TOKEN_EXPORT,
+    TOKEN_VAR,
+    TOKEN_IF,
+    TOKEN_ELSEIF,
+    TOKEN_ELSE,
+    TOKEN_STRUCT,
+    TOKEN_INTERFACE,
+    TOKEN_FOR,
+    TOKEN_IN,
+    TOKEN_UNTIL,
+    TOKEN_STEP,
+    TOKEN_WHILE,
+    TOKEN_BREAK,
+    TOKEN_MATCH,
+    TOKEN_CASE,
+    TOKEN_SELF,
+    TOKEN_NULL,
+    TOKEN_TRUE,
+    TOKEN_FALSE,
 
     // arithmetic operators
     TOKEN_PLUS,
     TOKEN_MINUS,
     TOKEN_STAR,
     TOKEN_SLASH,
+    TOKEN_AMPERSAND, // &
+    TOKEN_CARET, // ^
 
     // comparison operators
     TOKEN_EQUAL, // ==
@@ -35,6 +58,10 @@ typedef enum Token {
 
     // assignment
     TOKEN_ASSIGN, // =
+    TOKEN_PLUS_ASSIGN, // +=
+    TOKEN_MINUS_ASSIGN, // -=
+    TOKEN_STAR_ASSIGN, // *=
+    TOKEN_SLASH_ASSIGN, // /=
 
     // punctuation
     TOKEN_LEFT_PAREN,
@@ -49,6 +76,15 @@ typedef enum Token {
     // special
     TOKEN_END_OF_FILE,
     TOKEN_ERROR,
+} TokenType;
+
+typedef struct Token {
+    TokenType type;
+    char* value;
+    size_t size;
+    size_t offset;
+    size_t line;
+    size_t column;
 } Token;
 
 typedef struct Tokens {
@@ -57,6 +93,8 @@ typedef struct Tokens {
     size_t capacity;
 } Tokens;
 
-void lexer_tokenize(Arena* arena, Tokens* tokens, Errors* errors, char* buffer);
+void lexer_tokenize(Arena* arena, Tokens* tokens, Errors* errors, char* buffer, size_t buffer_size);
+
+void lexer_print(Tokens* tokens);
 
 #endif

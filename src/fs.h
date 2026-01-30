@@ -9,6 +9,6 @@ bool dir_exists(char* path);
 
 bool file_exists(char* path);
 
-char* file_read(Arena* arena, char* path);
+char* file_read(Arena* arena, char* path, size_t* out_size);
 
 #endif

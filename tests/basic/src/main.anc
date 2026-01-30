@@ -1,0 +1,227 @@
+# Anchor Language Programming
+# Transpile to C99.
+# Primitive types (with corresponding C99 types):
+#   byte (uint8_t) - no signed equivalent
+#   ushort (uint16_t), short (int16_t)
+#   uint (uint32_t), int (int32_t)
+#   ulong (uint64_t), long (int64_t)
+#   bool (bool, from stdbool.h)
+#   float (float), double (double)
+# Each file transpile to .h and .c file.
+# In .h file are exported identifiers (via export keyword)
+
+# Generate to:
+# static const float anc__basic__main__PI = 3.14f;
+const PI = 3.14f
+
+# Generate to:
+# .c: double anc__basic__main__TAU = 6.28;
+# .h: extern const double anc__basic__main__TAU;
+export const TAU = 6.28
+
+# Generate to:
+# static int anc__basic__main__static_variable = 5;
+var static_variable = 5
+
+# Generate to:
+# .c: int anc__basic__main__exported_global_variable = 5;
+# .h: extern int anc__basic__main__exported_global_variable;
+export var exported_global_variable = 5
+
+# Generate to:
+# static int anc__basic__main__explicit_static_variable = 5;
+var explicit_static_variable: int = 5
+
+# Generate to:
+# static int anc__basic__main__add(int a, int b) {
+#     return a + b;
+# }
+func add(a: int, b: int): int
+    return a + b
+end
+
+# Generate to:
+# .c:
+# int anc__basic__main__sub(int a, int b) {
+#     return a - b;
+# }
+# .h
+# int sub(int a, int b);
+export func sub(a: int, b: int): int
+    return a - b
+end
+
+func test_local_variables()
+    # Initial value is required
+    var a = 5
+    var b: int = 6
+    var c = a + b
+end
+
+func test_if_else(): int
+    var a = 5
+    if a > 0
+        return 1
+    elseif a < 0
+        return -1
+    else
+        return 0
+    end
+end
+
+func test_func_invocation(): int
+    var a = 3
+    var b = 5
+    return add(a, b)
+end
+
+func test_expression()
+    var a = 3
+    var b = 9
+    var c = a + b - (a * (10 - b)) / b + 3
+end
+
+# Generate to:
+# .c:
+# typedef struct anc__basic__main__Test {
+#     int foo;
+#     int bar;
+# } anc__basic__main__Test;
+struct Test
+    foo: int
+    bar: int
+end
+
+# Generate to:
+# static void anc__basic__main__test_struct() {
+#     anc__basic__main__Test test = (anc__basic__main__Test){ .foo = 3, .bar = 3 };
+#     return test.bar;
+# }
+func test_struct(): int
+    var test = Test(foo = 3, bar = 3)
+    return test.bar
+end
+
+# Generate to:
+# static void anc__basic__main__test_references() {
+#     anc__basic__main__Test test = (anc__basic__main__Test){ .foo = 3, .bar = 3 };
+#     anc__basic__main__Test* ref = &test;
+#     anc__basic__main__Test* explicit_ref = &test;
+#     return explicit_ref->bar;
+# }
+# References can't be null
+func test_references(): int
+    var test = Test(foo = 3, bar = 3)
+    var ref = &test
+    var explicit_ref: &Test = &test
+    return explicit_ref.bar
+end
+
+# Generate to:
+# static void anc__basic__main__test_pointers() {
+#     anc__basic__main__Test test = (anc__basic__main__Test){ .foo = 3, .bar = 3 };
+#     anc__basic__main__Test* ptr = NULL;
+#     ptr = &test;
+#     return ptr->bar;
+# }
+# Pointers can be null
+# Pointer functionality is only for native libraries interop
+func test_pointers(): int
+    var test = Test(foo = 3, bar = 3)
+    var ptr: *Test = null
+    ptr = &test
+    return ptr.bar
+end
+
+func test_for_loop(): int
+    var result = 0
+    for i in 0 until 10
+        result += i
+    end
+    for i in 0 until 10 step 2
+        result += i
+    end
+    return result
+end
+
+func test_while_loop(): int
+    var result = 0
+    var i = 0
+    while i < 10
+        result += i
+        i += 1
+    end
+    return result
+end
+
+func test_break(): int
+    var result = 0
+    for i in 0 until 10
+        if i > 5
+            break
+        end
+        result += i
+    end
+
+    var a = 0
+    while a < 10
+        if a > 5
+            break
+        end
+        a += 1
+    end
+    return result
+end
+
+func test_match(x: int): int
+    match x
+    case 0
+        return 0
+    case 1
+        return 1
+    case 2, 3, 4
+        return 2
+    else
+        return -1
+    end
+end
+
+# Generate to C:
+# .h:
+# typedef struct anc__basic__main__TestPair {
+#     int a;
+#     int b;
+# } anc__basic__main__TestPair;
+#
+# int anc__basic__main__TestPair__hash(anc__basic__main__TestPair* self);
+# .c:
+# int anc__basic__main__TestPair__hash(anc__basic__main__TestPair* self) {
+#     return self->a ^ self->b;
+# }
+export struct TestPair
+    a: int
+    b: int
+
+    func hash(): int
+        return self.a ^ self.b
+    end
+end
+
+export func test_struct_methods(): int
+    var pair = TestPair(a = 3, b = 9)
+    return pair.hash()
+end
+
+interface Hashable
+    func hash(): int
+end
+
+# Interfaces cannot be declared as non-reference
+func hash(hashable: &Hashable): int
+    return hashable.hash()
+end
+
+func test_interface(): int
+    var pair = TestPair(a = 3, b = 9)
+    return hash(&pair)
+end
