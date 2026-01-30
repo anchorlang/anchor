@@ -127,7 +127,7 @@ int main(int argc, char** argv) {
             return EXIT_FAILURE;
         }
 
-        sema_collect_symbols(&arena, &errors, &graph);
+        sema_analyze(&arena, &errors, &graph);
 
         printf("package: %s\n", pkg.name);
         printf("modules: %d\n", graph.count);
@@ -139,6 +139,9 @@ int main(int argc, char** argv) {
                 };
                 for (Symbol* s = m->symbols->first; s; s = s->next) {
                     printf("    %s %.*s", kind_names[s->kind], (int)s->name_size, s->name);
+                    if (s->node && s->node->resolved_type && s->kind == SYMBOL_FUNC) {
+                        printf(" %s", type_name((Type*)s->node->resolved_type));
+                    }
                     if (s->is_export) printf(" [export]");
                     if (s->source) printf(" <- %s", s->source->name);
                     printf("\n");

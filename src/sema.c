@@ -1,6 +1,6 @@
 #include "sema.h"
 #include "module.h"
-#include "fs.h"
+#include "type.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -176,7 +176,117 @@ static void resolve_module_imports(Arena* arena, Errors* errors, ModuleGraph* gr
     }
 }
 
-void sema_collect_symbols(Arena* arena, Errors* errors, ModuleGraph* graph) {
+static Type* resolve_type_node(TypeRegistry* reg, Errors* errors,
+                                SymbolTable* table, Node* node) {
+    if (!node) return type_void(reg);
+
+    switch (node->type) {
+    case NODE_TYPE_SIMPLE: {
+        char* name = node->as.type_simple.name;
+        size_t size = node->as.type_simple.name_size;
+        if (size == 4 && memcmp(name, "void", 4) == 0) return type_void(reg);
+        if (size == 4 && memcmp(name, "bool", 4) == 0) return type_bool(reg);
+        if (size == 4 && memcmp(name, "byte", 4) == 0) return type_byte(reg);
+        if (size == 5 && memcmp(name, "short", 5) == 0) return type_short(reg);
+        if (size == 6 && memcmp(name, "ushort", 6) == 0) return type_ushort(reg);
+        if (size == 3 && memcmp(name, "int", 3) == 0) return type_int(reg);
+        if (size == 4 && memcmp(name, "uint", 4) == 0) return type_uint(reg);
+        if (size == 4 && memcmp(name, "long", 4) == 0) return type_long(reg);
+        if (size == 5 && memcmp(name, "ulong", 5) == 0) return type_ulong(reg);
+        if (size == 5 && memcmp(name, "float", 5) == 0) return type_float(reg);
+        if (size == 6 && memcmp(name, "double", 6) == 0) return type_double(reg);
+        if (size == 6 && memcmp(name, "string", 6) == 0) return type_string(reg);
+
+        // look up struct/interface in symbol table
+        Symbol* sym = symbol_find(table, name, size);
+        if (sym && sym->node && sym->node->resolved_type) {
+            return (Type*)sym->node->resolved_type;
+        }
+        // check if it's an import
+        if (sym && sym->kind == SYMBOL_IMPORT && sym->source) {
+            Symbol* src_sym = symbol_find(sym->source->symbols, name, size);
+            if (src_sym && src_sym->node && src_sym->node->resolved_type) {
+                return (Type*)src_sym->node->resolved_type;
+            }
+        }
+        errors_push(errors, SEVERITY_ERROR, node->offset, node->line, node->column,
+                    "unknown type '%.*s'", (int)size, name);
+        return NULL;
+    }
+    case NODE_TYPE_REFERENCE: {
+        Type* inner = resolve_type_node(reg, errors, table, node->as.type_ref.inner);
+        if (!inner) return NULL;
+        return type_ref(reg, inner);
+    }
+    case NODE_TYPE_POINTER: {
+        Type* inner = resolve_type_node(reg, errors, table, node->as.type_ptr.inner);
+        if (!inner) return NULL;
+        return type_ptr(reg, inner);
+    }
+    default:
+        return NULL;
+    }
+}
+
+static void resolve_module_types(Arena* arena, Errors* errors,
+                                  TypeRegistry* reg, Module* mod) {
+    if (!mod->symbols) return;
+
+    for (Symbol* sym = mod->symbols->first; sym; sym = sym->next) {
+        if (!sym->node) continue;
+
+        switch (sym->kind) {
+        case SYMBOL_STRUCT: {
+            Type* t = type_struct(reg,
+                sym->node->as.struct_decl.name,
+                sym->node->as.struct_decl.name_size,
+                mod,
+                &sym->node->as.struct_decl.fields,
+                &sym->node->as.struct_decl.methods);
+            sym->node->resolved_type = t;
+            break;
+        }
+        case SYMBOL_INTERFACE: {
+            Type* t = type_interface(reg,
+                sym->node->as.interface_decl.name,
+                sym->node->as.interface_decl.name_size,
+                &sym->node->as.interface_decl.method_sigs);
+            sym->node->resolved_type = t;
+            break;
+        }
+        default:
+            break;
+        }
+    }
+}
+
+static void resolve_func_types(Arena* arena, Errors* errors,
+                                TypeRegistry* reg, Module* mod) {
+    if (!mod->symbols) return;
+
+    for (Symbol* sym = mod->symbols->first; sym; sym = sym->next) {
+        if (sym->kind != SYMBOL_FUNC || !sym->node) continue;
+
+        ParamList* params = &sym->node->as.func_decl.params;
+        int param_count = (int)params->count;
+        Type** param_types = NULL;
+        if (param_count > 0) {
+            param_types = arena_alloc(arena, sizeof(Type*) * param_count);
+            for (int i = 0; i < param_count; i++) {
+                param_types[i] = resolve_type_node(reg, errors, mod->symbols,
+                                                    params->params[i].type_node);
+            }
+        }
+
+        Type* return_type = resolve_type_node(reg, errors, mod->symbols,
+                                               sym->node->as.func_decl.return_type);
+
+        Type* func_t = type_func(reg, param_types, param_count, return_type);
+        sym->node->resolved_type = func_t;
+    }
+}
+
+void sema_analyze(Arena* arena, Errors* errors, ModuleGraph* graph) {
     // pass 1: collect local declarations
     for (Module* m = graph->first; m; m = m->next) {
         collect_module_symbols(arena, errors, m);
@@ -185,5 +295,19 @@ void sema_collect_symbols(Arena* arena, Errors* errors, ModuleGraph* graph) {
     // pass 2: resolve imports
     for (Module* m = graph->first; m; m = m->next) {
         resolve_module_imports(arena, errors, graph, m);
+    }
+
+    // pass 3: resolve types
+    TypeRegistry reg;
+    type_registry_init(&reg, arena);
+
+    // 3a: structs and interfaces first (so they can be referenced by functions)
+    for (Module* m = graph->first; m; m = m->next) {
+        resolve_module_types(arena, errors, &reg, m);
+    }
+
+    // 3b: function signatures (may reference struct/interface types)
+    for (Module* m = graph->first; m; m = m->next) {
+        resolve_func_types(arena, errors, &reg, m);
     }
 }

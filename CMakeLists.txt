@@ -17,4 +17,5 @@ add_executable (ancc
     "src/package.c"
     "src/parser.c"
     "src/sema.c"
+    "src/type.c"
 )

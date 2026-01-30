@@ -4,6 +4,7 @@
 #include "arena.h"
 #include "error.h"
 #include "ast.h"
+#include "type.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -37,6 +38,6 @@ typedef struct SymbolTable {
 
 typedef struct ModuleGraph ModuleGraph;
 
-void sema_collect_symbols(Arena* arena, Errors* errors, ModuleGraph* graph);
+void sema_analyze(Arena* arena, Errors* errors, ModuleGraph* graph);
 
 #endif
