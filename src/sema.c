@@ -337,6 +337,7 @@ typedef struct CheckContext {
     Scope* scope;
     Type* return_type;
     Type* self_type;  // non-NULL inside struct methods
+    int loop_depth;   // > 0 inside for/while/match
 } CheckContext;
 
 static Scope* scope_push(CheckContext* ctx) {
@@ -353,10 +354,10 @@ static void scope_pop(CheckContext* ctx, Scope* prev) {
     ctx->scope = prev;
 }
 
-static void scope_add(CheckContext* ctx, char* name, size_t name_size, Type* type, Node* node) {
+static void scope_add(CheckContext* ctx, SymbolKind kind, char* name, size_t name_size, Type* type, Node* node) {
     Symbol* sym = arena_alloc(ctx->arena, sizeof(Symbol));
     sym->next = NULL;
-    sym->kind = SYMBOL_VAR;
+    sym->kind = kind;
     sym->name = name;
     sym->name_size = name_size;
     sym->is_export = false;
@@ -467,6 +468,18 @@ static void impl_pair_add(Module* mod, Type* struct_type, Type* iface_type, Modu
     list->pairs[list->count].interface_type = iface_type;
     list->pairs[list->count].struct_module = struct_mod;
     list->count++;
+}
+
+static bool is_lvalue(Node* node) {
+    if (!node) return false;
+    switch (node->type) {
+    case NODE_IDENTIFIER:
+    case NODE_FIELD_ACCESS:
+    case NODE_SELF:
+        return true;
+    default:
+        return false;
+    }
 }
 
 static Type* check_expr(CheckContext* ctx, Node* node);
@@ -933,7 +946,16 @@ static void check_stmt(CheckContext* ctx, Node* node) {
             }
         }
 
-        scope_add(ctx, node->as.var_decl.name, node->as.var_decl.name_size, var_type, node);
+        if (ctx->scope) {
+            Symbol* dup = symbol_find(&ctx->scope->locals, node->as.var_decl.name, node->as.var_decl.name_size);
+            if (dup) {
+                errors_push(ctx->errors, SEVERITY_ERROR, node->offset, node->line, node->column,
+                            "duplicate variable '%.*s' in this scope",
+                            (int)node->as.var_decl.name_size, node->as.var_decl.name);
+                break;
+            }
+        }
+        scope_add(ctx, SYMBOL_VAR, node->as.var_decl.name, node->as.var_decl.name_size, var_type, node);
         break;
     }
 
@@ -956,14 +978,26 @@ static void check_stmt(CheckContext* ctx, Node* node) {
             break;
         }
 
-        scope_add(ctx, node->as.const_decl.name, node->as.const_decl.name_size, const_type, node);
+        if (ctx->scope) {
+            Symbol* dup = symbol_find(&ctx->scope->locals, node->as.const_decl.name, node->as.const_decl.name_size);
+            if (dup) {
+                errors_push(ctx->errors, SEVERITY_ERROR, node->offset, node->line, node->column,
+                            "duplicate variable '%.*s' in this scope",
+                            (int)node->as.const_decl.name_size, node->as.const_decl.name);
+                break;
+            }
+        }
+        scope_add(ctx, SYMBOL_CONST, node->as.const_decl.name, node->as.const_decl.name_size, const_type, node);
         break;
     }
 
     case NODE_RETURN_STMT: {
         if (node->as.return_stmt.value) {
             Type* val = check_expr(ctx, node->as.return_stmt.value);
-            if (val && ctx->return_type) {
+            if (ctx->return_type && ctx->return_type->kind == TYPE_VOID) {
+                errors_push(ctx->errors, SEVERITY_ERROR, node->offset, node->line, node->column,
+                            "return with value in void function");
+            } else if (val && ctx->return_type) {
                 if (!type_equals(val, ctx->return_type)) {
                     // allow integer conversions (C99-style)
                     bool compatible = false;
@@ -1023,8 +1057,25 @@ static void check_stmt(CheckContext* ctx, Node* node) {
     case NODE_FOR_STMT: {
         Type* start_type = check_expr(ctx, node->as.for_stmt.start);
         Type* end_type = check_expr(ctx, node->as.for_stmt.end);
+        Type* step_type = NULL;
         if (node->as.for_stmt.step) {
-            check_expr(ctx, node->as.for_stmt.step);
+            step_type = check_expr(ctx, node->as.for_stmt.step);
+        }
+
+        if (start_type && !type_is_integer(start_type)) {
+            errors_push(ctx->errors, SEVERITY_ERROR, node->as.for_stmt.start->offset,
+                        node->as.for_stmt.start->line, node->as.for_stmt.start->column,
+                        "for-loop start must be an integer type, got '%s'", type_name(start_type));
+        }
+        if (end_type && !type_is_integer(end_type)) {
+            errors_push(ctx->errors, SEVERITY_ERROR, node->as.for_stmt.end->offset,
+                        node->as.for_stmt.end->line, node->as.for_stmt.end->column,
+                        "for-loop end must be an integer type, got '%s'", type_name(end_type));
+        }
+        if (step_type && !type_is_integer(step_type)) {
+            errors_push(ctx->errors, SEVERITY_ERROR, node->as.for_stmt.step->offset,
+                        node->as.for_stmt.step->line, node->as.for_stmt.step->column,
+                        "for-loop step must be an integer type, got '%s'", type_name(step_type));
         }
 
         // determine iterator type from start expression
@@ -1032,9 +1083,11 @@ static void check_stmt(CheckContext* ctx, Node* node) {
 
         Scope* prev = ctx->scope;
         scope_push(ctx);
-        scope_add(ctx, node->as.for_stmt.var_name, node->as.for_stmt.var_name_size,
+        scope_add(ctx, SYMBOL_VAR, node->as.for_stmt.var_name, node->as.for_stmt.var_name_size,
                   iter_type, NULL);
+        ctx->loop_depth++;
         check_body(ctx, &node->as.for_stmt.body);
+        ctx->loop_depth--;
         scope_pop(ctx, prev);
         break;
     }
@@ -1045,16 +1098,23 @@ static void check_stmt(CheckContext* ctx, Node* node) {
             errors_push(ctx->errors, SEVERITY_ERROR, node->offset, node->line, node->column,
                         "while condition must be bool, got '%s'", type_name(cond));
         }
+        ctx->loop_depth++;
         check_body(ctx, &node->as.while_stmt.body);
+        ctx->loop_depth--;
         break;
     }
 
     case NODE_BREAK_STMT:
+        if (ctx->loop_depth == 0) {
+            errors_push(ctx->errors, SEVERITY_ERROR, node->offset, node->line, node->column,
+                        "'break' used outside of loop or match");
+        }
         break;
 
     case NODE_MATCH_STMT: {
         Type* subject = check_expr(ctx, node->as.match_stmt.subject);
         MatchCaseList* cases = &node->as.match_stmt.cases;
+        ctx->loop_depth++;
         for (size_t i = 0; i < cases->count; i++) {
             NodeList* vals = &cases->cases[i].values;
             for (size_t j = 0; j < vals->count; j++) {
@@ -1068,13 +1128,69 @@ static void check_stmt(CheckContext* ctx, Node* node) {
             }
             check_body(ctx, &cases->cases[i].body);
         }
+
+        // check for duplicate case values (O(n^2) — case counts are small)
+        for (size_t i = 0; i < cases->count; i++) {
+            NodeList* vals_i = &cases->cases[i].values;
+            for (size_t vi = 0; vi < vals_i->count; vi++) {
+                Node* a = vals_i->nodes[vi];
+                // compare against all subsequent case values
+                for (size_t j = i; j < cases->count; j++) {
+                    NodeList* vals_j = &cases->cases[j].values;
+                    size_t vj_start = (j == i) ? vi + 1 : 0;
+                    for (size_t vj = vj_start; vj < vals_j->count; vj++) {
+                        Node* b = vals_j->nodes[vj];
+                        if (a->type != b->type) continue;
+                        bool dup = false;
+                        if (a->type == NODE_INTEGER_LITERAL &&
+                            a->as.integer_literal.value_size == b->as.integer_literal.value_size &&
+                            memcmp(a->as.integer_literal.value, b->as.integer_literal.value,
+                                   a->as.integer_literal.value_size) == 0) {
+                            dup = true;
+                        }
+                        if (a->type == NODE_BOOL_LITERAL &&
+                            a->as.bool_literal.value == b->as.bool_literal.value) {
+                            dup = true;
+                        }
+                        if (a->type == NODE_STRING_LITERAL &&
+                            a->as.string_literal.value_size == b->as.string_literal.value_size &&
+                            memcmp(a->as.string_literal.value, b->as.string_literal.value,
+                                   a->as.string_literal.value_size) == 0) {
+                            dup = true;
+                        }
+                        if (dup) {
+                            errors_push(ctx->errors, SEVERITY_ERROR,
+                                        b->offset, b->line, b->column,
+                                        "duplicate match case value");
+                        }
+                    }
+                }
+            }
+        }
+
         if (node->as.match_stmt.else_body.count > 0) {
             check_body(ctx, &node->as.match_stmt.else_body);
         }
+        ctx->loop_depth--;
         break;
     }
 
     case NODE_ASSIGN_STMT: {
+        if (!is_lvalue(node->as.assign_stmt.target)) {
+            errors_push(ctx->errors, SEVERITY_ERROR, node->offset, node->line, node->column,
+                        "cannot assign to this expression");
+        }
+        if (node->as.assign_stmt.target->type == NODE_IDENTIFIER) {
+            Symbol* sym = scope_lookup(ctx,
+                node->as.assign_stmt.target->as.identifier.name,
+                node->as.assign_stmt.target->as.identifier.name_size);
+            if (sym && sym->kind == SYMBOL_CONST) {
+                errors_push(ctx->errors, SEVERITY_ERROR, node->offset, node->line, node->column,
+                            "cannot assign to constant '%.*s'",
+                            (int)node->as.assign_stmt.target->as.identifier.name_size,
+                            node->as.assign_stmt.target->as.identifier.name);
+            }
+        }
         Type* target = check_expr(ctx, node->as.assign_stmt.target);
         Type* value = check_expr(ctx, node->as.assign_stmt.value);
         if (target && value && !type_equals(target, value)) {
@@ -1106,6 +1222,21 @@ static void check_stmt(CheckContext* ctx, Node* node) {
     }
 
     case NODE_COMPOUND_ASSIGN_STMT: {
+        if (!is_lvalue(node->as.compound_assign_stmt.target)) {
+            errors_push(ctx->errors, SEVERITY_ERROR, node->offset, node->line, node->column,
+                        "cannot assign to this expression");
+        }
+        if (node->as.compound_assign_stmt.target->type == NODE_IDENTIFIER) {
+            Symbol* sym = scope_lookup(ctx,
+                node->as.compound_assign_stmt.target->as.identifier.name,
+                node->as.compound_assign_stmt.target->as.identifier.name_size);
+            if (sym && sym->kind == SYMBOL_CONST) {
+                errors_push(ctx->errors, SEVERITY_ERROR, node->offset, node->line, node->column,
+                            "cannot assign to constant '%.*s'",
+                            (int)node->as.compound_assign_stmt.target->as.identifier.name_size,
+                            node->as.compound_assign_stmt.target->as.identifier.name);
+            }
+        }
         Type* target = check_expr(ctx, node->as.compound_assign_stmt.target);
         Type* value = check_expr(ctx, node->as.compound_assign_stmt.value);
         if (target && !type_is_numeric(target)) {
@@ -1163,7 +1294,7 @@ static void check_func_body(CheckContext* ctx, Node* func_node) {
     ParamList* params = &func_node->as.func_decl.params;
     for (size_t i = 0; i < params->count; i++) {
         Type* param_type = func_type->as.func_type.param_types[i];
-        scope_add(ctx, params->params[i].name, params->params[i].name_size, param_type, NULL);
+        scope_add(ctx, SYMBOL_VAR, params->params[i].name, params->params[i].name_size, param_type, NULL);
     }
 
     // check body statements (not wrapped in check_body to avoid double scope push)
@@ -1225,6 +1356,7 @@ static void check_module_bodies(Arena* arena, Errors* errors, TypeRegistry* reg,
     ctx.scope = NULL;
     ctx.return_type = NULL;
     ctx.self_type = NULL;
+    ctx.loop_depth = 0;
 
     for (Symbol* sym = mod->symbols->first; sym; sym = sym->next) {
         if (!sym->node) continue;
