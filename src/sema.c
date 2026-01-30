@@ -196,6 +196,8 @@ static Type* resolve_type_node(TypeRegistry* reg, Errors* errors,
         if (size == 4 && memcmp(name, "uint", 4) == 0) return type_uint(reg);
         if (size == 4 && memcmp(name, "long", 4) == 0) return type_long(reg);
         if (size == 5 && memcmp(name, "ulong", 5) == 0) return type_ulong(reg);
+        if (size == 5 && memcmp(name, "isize", 5) == 0) return type_isize(reg);
+        if (size == 5 && memcmp(name, "usize", 5) == 0) return type_usize(reg);
         if (size == 5 && memcmp(name, "float", 5) == 0) return type_float(reg);
         if (size == 6 && memcmp(name, "double", 6) == 0) return type_double(reg);
         if (size == 6 && memcmp(name, "string", 6) == 0) return type_string(reg);
@@ -890,11 +892,23 @@ static void check_stmt(CheckContext* ctx, Node* node) {
         }
 
         if (declared_type && init_type && !type_equals(declared_type, init_type)) {
-            // allow null (*void) assigned to any pointer type
             bool compatible = false;
+            // allow null (*void) assigned to any pointer type
             if (init_type->kind == TYPE_PTR && init_type->as.ptr_type.inner->kind == TYPE_VOID &&
                 declared_type->kind == TYPE_PTR) {
                 compatible = true;
+            }
+            // allow integer conversions (C99-style)
+            if (type_is_integer(declared_type) && type_is_integer(init_type)) {
+                // integer literals can be assigned to any integer type
+                if (node->as.var_decl.value &&
+                    node->as.var_decl.value->type == NODE_INTEGER_LITERAL) {
+                    compatible = true;
+                }
+                // widening conversions (smaller -> larger rank) always allowed
+                else if (type_integer_convertible(init_type, declared_type)) {
+                    compatible = true;
+                }
             }
             if (!compatible) {
                 errors_push(ctx->errors, SEVERITY_ERROR, node->offset, node->line, node->column,
@@ -936,10 +950,17 @@ static void check_stmt(CheckContext* ctx, Node* node) {
             Type* val = check_expr(ctx, node->as.return_stmt.value);
             if (val && ctx->return_type) {
                 if (!type_equals(val, ctx->return_type)) {
-                    // allow integer literal in non-int integer context (e.g. return 4 in ushort func)
+                    // allow integer conversions (C99-style)
                     bool compatible = false;
                     if (type_is_integer(val) && type_is_integer(ctx->return_type)) {
-                        compatible = true;
+                        // integer literals can convert to any integer type
+                        if (node->as.return_stmt.value->type == NODE_INTEGER_LITERAL) {
+                            compatible = true;
+                        }
+                        // widening conversions always allowed
+                        else if (type_integer_convertible(val, ctx->return_type)) {
+                            compatible = true;
+                        }
                     }
                     if (!compatible) {
                         errors_push(ctx->errors, SEVERITY_ERROR, node->offset, node->line, node->column,
@@ -1052,6 +1073,14 @@ static void check_stmt(CheckContext* ctx, Node* node) {
             if (value->kind == TYPE_REF && target->kind == TYPE_PTR) {
                 compatible = true;
             }
+            // allow integer widening conversions and literal assignments
+            if (type_is_integer(target) && type_is_integer(value)) {
+                if (node->as.assign_stmt.value->type == NODE_INTEGER_LITERAL) {
+                    compatible = true;
+                } else if (type_integer_convertible(value, target)) {
+                    compatible = true;
+                }
+            }
             if (!compatible) {
                 errors_push(ctx->errors, SEVERITY_ERROR, node->offset, node->line, node->column,
                             "assignment type mismatch: expected '%s', got '%s'",
@@ -1069,9 +1098,19 @@ static void check_stmt(CheckContext* ctx, Node* node) {
                         "compound assignment target must be numeric, got '%s'", type_name(target));
         }
         if (target && value && !type_equals(target, value)) {
-            errors_push(ctx->errors, SEVERITY_ERROR, node->offset, node->line, node->column,
-                        "compound assignment type mismatch: '%s' vs '%s'",
-                        type_name(target), type_name(value));
+            bool compatible = false;
+            if (type_is_integer(target) && type_is_integer(value)) {
+                if (node->as.compound_assign_stmt.value->type == NODE_INTEGER_LITERAL) {
+                    compatible = true;
+                } else if (type_integer_convertible(value, target)) {
+                    compatible = true;
+                }
+            }
+            if (!compatible) {
+                errors_push(ctx->errors, SEVERITY_ERROR, node->offset, node->line, node->column,
+                            "compound assignment type mismatch: '%s' vs '%s'",
+                            type_name(target), type_name(value));
+            }
         }
         break;
     }

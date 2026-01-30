@@ -21,6 +21,8 @@ void type_registry_init(TypeRegistry* reg, Arena* arena) {
     reg->type_uint = make_primitive(arena, TYPE_UINT);
     reg->type_long = make_primitive(arena, TYPE_LONG);
     reg->type_ulong = make_primitive(arena, TYPE_ULONG);
+    reg->type_isize = make_primitive(arena, TYPE_ISIZE);
+    reg->type_usize = make_primitive(arena, TYPE_USIZE);
     reg->type_float = make_primitive(arena, TYPE_FLOAT);
     reg->type_double = make_primitive(arena, TYPE_DOUBLE);
     reg->type_string = make_primitive(arena, TYPE_STRING);
@@ -35,6 +37,8 @@ Type* type_int(TypeRegistry* reg) { return reg->type_int; }
 Type* type_uint(TypeRegistry* reg) { return reg->type_uint; }
 Type* type_long(TypeRegistry* reg) { return reg->type_long; }
 Type* type_ulong(TypeRegistry* reg) { return reg->type_ulong; }
+Type* type_isize(TypeRegistry* reg) { return reg->type_isize; }
+Type* type_usize(TypeRegistry* reg) { return reg->type_usize; }
 Type* type_float(TypeRegistry* reg) { return reg->type_float; }
 Type* type_double(TypeRegistry* reg) { return reg->type_double; }
 Type* type_string(TypeRegistry* reg) { return reg->type_string; }
@@ -103,6 +107,8 @@ static int type_name_write(Type* type, char* buf, int size) {
     case TYPE_UINT:   return snprintf(buf, size, "uint");
     case TYPE_LONG:   return snprintf(buf, size, "long");
     case TYPE_ULONG:  return snprintf(buf, size, "ulong");
+    case TYPE_ISIZE:  return snprintf(buf, size, "isize");
+    case TYPE_USIZE:  return snprintf(buf, size, "usize");
     case TYPE_FLOAT:  return snprintf(buf, size, "float");
     case TYPE_DOUBLE: return snprintf(buf, size, "double");
     case TYPE_STRING: return snprintf(buf, size, "string");
@@ -181,6 +187,8 @@ bool type_is_integer(Type* type) {
     case TYPE_UINT:
     case TYPE_LONG:
     case TYPE_ULONG:
+    case TYPE_ISIZE:
+    case TYPE_USIZE:
         return true;
     default:
         return false;
@@ -190,4 +198,30 @@ bool type_is_integer(Type* type) {
 bool type_is_numeric(Type* type) {
     if (!type) return false;
     return type_is_integer(type) || type->kind == TYPE_FLOAT || type->kind == TYPE_DOUBLE;
+}
+
+// Returns the bit-width rank of an integer type (for implicit conversion checks).
+// Higher rank = wider type. isize/usize ranked same as long/ulong (pointer-width).
+int type_integer_rank(Type* type) {
+    if (!type) return -1;
+    switch (type->kind) {
+    case TYPE_BYTE:   return 1;
+    case TYPE_SHORT:  return 2;
+    case TYPE_USHORT: return 2;
+    case TYPE_INT:    return 3;
+    case TYPE_UINT:   return 3;
+    case TYPE_ISIZE:  return 4;
+    case TYPE_USIZE:  return 4;
+    case TYPE_LONG:   return 4;
+    case TYPE_ULONG:  return 4;
+    default:          return -1;
+    }
+}
+
+// C99-style implicit integer conversion: widening is allowed, narrowing is not.
+// Same-rank conversions (e.g. int<->uint, long<->ulong, isize<->usize) are allowed.
+bool type_integer_convertible(Type* from, Type* to) {
+    if (!from || !to) return false;
+    if (!type_is_integer(from) || !type_is_integer(to)) return false;
+    return type_integer_rank(from) <= type_integer_rank(to);
 }

@@ -65,6 +65,8 @@ static void emit_type(CodeGen* gen, FILE* f, Type* type) {
     case TYPE_UINT:   fprintf(f, "uint32_t"); break;
     case TYPE_LONG:   fprintf(f, "int64_t"); break;
     case TYPE_ULONG:  fprintf(f, "uint64_t"); break;
+    case TYPE_ISIZE:  fprintf(f, "ptrdiff_t"); break;
+    case TYPE_USIZE:  fprintf(f, "size_t"); break;
     case TYPE_FLOAT:  fprintf(f, "float"); break;
     case TYPE_DOUBLE: fprintf(f, "double"); break;
     case TYPE_STRING: fprintf(f, "const char*"); break;

@@ -5,6 +5,7 @@
 #   ushort (uint16_t), short (int16_t)
 #   uint (uint32_t), int (int32_t)
 #   ulong (uint64_t), long (int64_t)
+#   usize (size_t), isize (ptrdiff_t)
 #   bool (bool, from stdbool.h)
 #   float (float), double (double)
 # Each file transpile to .h and .c file.
@@ -237,4 +238,9 @@ end
 
 func test_and_or(a: int, b: int): bool
     return (a < 6 and b > 9) or (a > 10 and b > 12) or a == 2
+end
+
+func test_usize(): usize
+    var size: usize = 5
+    return size
 end

@@ -20,6 +20,8 @@ typedef enum TypeKind {
     TYPE_UINT,
     TYPE_LONG,
     TYPE_ULONG,
+    TYPE_ISIZE,
+    TYPE_USIZE,
     TYPE_FLOAT,
     TYPE_DOUBLE,
     TYPE_STRING,
@@ -74,6 +76,8 @@ typedef struct TypeRegistry {
     Type* type_uint;
     Type* type_long;
     Type* type_ulong;
+    Type* type_isize;
+    Type* type_usize;
     Type* type_float;
     Type* type_double;
     Type* type_string;
@@ -90,6 +94,8 @@ Type* type_int(TypeRegistry* reg);
 Type* type_uint(TypeRegistry* reg);
 Type* type_long(TypeRegistry* reg);
 Type* type_ulong(TypeRegistry* reg);
+Type* type_isize(TypeRegistry* reg);
+Type* type_usize(TypeRegistry* reg);
 Type* type_float(TypeRegistry* reg);
 Type* type_double(TypeRegistry* reg);
 Type* type_string(TypeRegistry* reg);
@@ -107,5 +113,7 @@ const char* type_name(Type* type);
 bool type_equals(Type* a, Type* b);
 bool type_is_numeric(Type* type);
 bool type_is_integer(Type* type);
+int type_integer_rank(Type* type);
+bool type_integer_convertible(Type* from, Type* to);
 
 #endif
