@@ -28,6 +28,7 @@ typedef struct Symbol {
     bool is_export;
     Node* node;
     Module* source;
+    Type* resolved_type;
 } Symbol;
 
 typedef struct SymbolTable {

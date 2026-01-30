@@ -5,6 +5,7 @@
 
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 static Symbol* symbol_add(Arena* arena, SymbolTable* table, SymbolKind kind,
                            char* name, size_t name_size, bool is_export, Node* node) {
@@ -16,6 +17,7 @@ static Symbol* symbol_add(Arena* arena, SymbolTable* table, SymbolKind kind,
     sym->is_export = is_export;
     sym->node = node;
     sym->source = NULL;
+    sym->resolved_type = NULL;
     if (!table->first) {
         table->first = sym;
     } else {
@@ -262,6 +264,26 @@ static void resolve_module_types(Arena* arena, Errors* errors,
                 sym->node->as.interface_decl.name_size,
                 &sym->node->as.interface_decl.method_sigs);
             sym->node->resolved_type = t;
+
+            // resolve method signature types
+            NodeList* sigs = &sym->node->as.interface_decl.method_sigs;
+            for (size_t i = 0; i < sigs->count; i++) {
+                Node* sig = sigs->nodes[i];
+                if (sig->type != NODE_FUNC_DECL || sig->resolved_type) continue;
+                ParamList* params = &sig->as.func_decl.params;
+                int param_count = (int)params->count;
+                Type** param_types = NULL;
+                if (param_count > 0) {
+                    param_types = arena_alloc(arena, sizeof(Type*) * param_count);
+                    for (int j = 0; j < param_count; j++) {
+                        param_types[j] = resolve_type_node(reg, errors, mod->symbols,
+                                                            params->params[j].type_node);
+                    }
+                }
+                Type* ret = resolve_type_node(reg, errors, mod->symbols,
+                                               sig->as.func_decl.return_type);
+                sig->resolved_type = type_func(reg, param_types, param_count, ret);
+            }
             break;
         }
         default:
@@ -338,6 +360,7 @@ static void scope_add(CheckContext* ctx, char* name, size_t name_size, Type* typ
     sym->is_export = false;
     sym->node = node;
     sym->source = NULL;
+    sym->resolved_type = type;
     if (node) node->resolved_type = type;
 
     SymbolTable* t = &ctx->scope->locals;
@@ -360,8 +383,10 @@ static Symbol* scope_lookup(CheckContext* ctx, char* name, size_t name_size) {
 }
 
 static Type* get_symbol_type(Symbol* sym) {
-    if (!sym || !sym->node) return NULL;
-    return (Type*)sym->node->resolved_type;
+    if (!sym) return NULL;
+    if (sym->resolved_type) return sym->resolved_type;
+    if (sym->node) return (Type*)sym->node->resolved_type;
+    return NULL;
 }
 
 // unwrap &T or *T to get the struct type underneath
@@ -371,6 +396,75 @@ static Type* unwrap_to_struct(Type* type) {
     if (type->kind == TYPE_REF) return unwrap_to_struct(type->as.ref_type.inner);
     if (type->kind == TYPE_PTR) return unwrap_to_struct(type->as.ptr_type.inner);
     return NULL;
+}
+
+// unwrap &T or *T to get the interface type underneath
+static Type* unwrap_to_interface(Type* type) {
+    if (!type) return NULL;
+    if (type->kind == TYPE_INTERFACE) return type;
+    if (type->kind == TYPE_REF) return unwrap_to_interface(type->as.ref_type.inner);
+    if (type->kind == TYPE_PTR) return unwrap_to_interface(type->as.ptr_type.inner);
+    return NULL;
+}
+
+// check if a struct satisfies an interface (has all required methods with matching signatures)
+static bool check_interface_satisfaction(CheckContext* ctx, Type* struct_type, Type* iface_type) {
+    if (!struct_type || !iface_type) return false;
+    if (struct_type->kind != TYPE_STRUCT || iface_type->kind != TYPE_INTERFACE) return false;
+
+    NodeList* iface_sigs = iface_type->as.interface_type.method_sigs;
+    NodeList* struct_methods = struct_type->as.struct_type.methods;
+
+    for (size_t i = 0; i < iface_sigs->count; i++) {
+        Node* sig = iface_sigs->nodes[i];
+        if (sig->type != NODE_FUNC_DECL) continue;
+
+        char* sig_name = sig->as.func_decl.name;
+        size_t sig_name_size = sig->as.func_decl.name_size;
+
+        // find matching method on struct
+        bool found = false;
+        for (size_t j = 0; j < struct_methods->count; j++) {
+            Node* m = struct_methods->nodes[j];
+            if (m->type != NODE_FUNC_DECL) continue;
+            if (m->as.func_decl.name_size == sig_name_size &&
+                memcmp(m->as.func_decl.name, sig_name, sig_name_size) == 0) {
+                // check param count matches
+                if (m->as.func_decl.params.count != sig->as.func_decl.params.count) {
+                    return false;
+                }
+                found = true;
+                break;
+            }
+        }
+        if (!found) return false;
+    }
+    return true;
+}
+
+// record a (struct, interface) implementation pair on the module
+static void impl_pair_add(Module* mod, Type* struct_type, Type* iface_type, Module* struct_mod) {
+    ImplPairList* list = &mod->impl_pairs;
+
+    // check for duplicate
+    for (size_t i = 0; i < list->count; i++) {
+        if (list->pairs[i].struct_type == struct_type &&
+            list->pairs[i].interface_type == iface_type) {
+            return;
+        }
+    }
+
+    if (list->count >= list->capacity) {
+        size_t new_cap = list->capacity == 0 ? 4 : list->capacity * 2;
+        ImplPair* new_pairs = realloc(list->pairs, new_cap * sizeof(ImplPair));
+        list->pairs = new_pairs;
+        list->capacity = new_cap;
+    }
+
+    list->pairs[list->count].struct_type = struct_type;
+    list->pairs[list->count].interface_type = iface_type;
+    list->pairs[list->count].struct_module = struct_mod;
+    list->count++;
 }
 
 static Type* check_expr(CheckContext* ctx, Node* node);
@@ -570,13 +664,24 @@ static Type* check_expr(CheckContext* ctx, Node* node) {
             if (!arg_type) continue;
             Type* param_type = callee_type->as.func_type.param_types[i];
             if (param_type && !type_equals(arg_type, param_type)) {
-                // allow &Struct where &Interface is expected (duck typing check deferred)
-                // allow *void (null) where any pointer is expected
                 bool compatible = false;
-                if (param_type->kind == TYPE_REF && arg_type->kind == TYPE_REF) {
-                    // &ConcreteStruct is compatible with &Interface (for now, allow)
-                    compatible = true;
+                // allow &Struct where &Interface is expected (with satisfaction check)
+                Type* param_iface = unwrap_to_interface(param_type);
+                Type* arg_struct = unwrap_to_struct(arg_type);
+                if (param_iface && arg_struct) {
+                    if (check_interface_satisfaction(ctx, arg_struct, param_iface)) {
+                        compatible = true;
+                        impl_pair_add(ctx->mod, arg_struct, param_iface,
+                                      arg_struct->as.struct_type.module);
+                    } else {
+                        errors_push(ctx->errors, SEVERITY_ERROR, args->nodes[i]->offset,
+                                    args->nodes[i]->line, args->nodes[i]->column,
+                                    "struct '%s' does not satisfy interface '%s'",
+                                    type_name(arg_struct), type_name(param_iface));
+                        compatible = true; // already reported
+                    }
                 }
+                // allow *void (null) where any pointer is expected
                 if (arg_type->kind == TYPE_PTR && arg_type->as.ptr_type.inner->kind == TYPE_VOID &&
                     param_type->kind == TYPE_PTR) {
                     compatible = true;
@@ -629,32 +734,52 @@ static Type* check_expr(CheckContext* ctx, Node* node) {
         Type* obj_type = check_expr(ctx, node->as.method_call.object);
         if (!obj_type) break;
 
-        Type* struct_type = unwrap_to_struct(obj_type);
-        if (!struct_type) {
-            errors_push(ctx->errors, SEVERITY_ERROR, node->offset, node->line, node->column,
-                        "cannot call method on type '%s'", type_name(obj_type));
-            break;
-        }
-
         char* method_name = node->as.method_call.method_name;
         size_t method_name_size = node->as.method_call.method_name_size;
-        NodeList* methods = struct_type->as.struct_type.methods;
+
+        // try struct first, then interface
+        Type* struct_type = unwrap_to_struct(obj_type);
+        Type* iface_type = struct_type ? NULL : unwrap_to_interface(obj_type);
 
         Node* method_node = NULL;
-        for (size_t i = 0; i < methods->count; i++) {
-            Node* m = methods->nodes[i];
-            if (m->type == NODE_FUNC_DECL &&
-                m->as.func_decl.name_size == method_name_size &&
-                memcmp(m->as.func_decl.name, method_name, method_name_size) == 0) {
-                method_node = m;
+
+        if (struct_type) {
+            NodeList* methods = struct_type->as.struct_type.methods;
+            for (size_t i = 0; i < methods->count; i++) {
+                Node* m = methods->nodes[i];
+                if (m->type == NODE_FUNC_DECL &&
+                    m->as.func_decl.name_size == method_name_size &&
+                    memcmp(m->as.func_decl.name, method_name, method_name_size) == 0) {
+                    method_node = m;
+                    break;
+                }
+            }
+            if (!method_node) {
+                errors_push(ctx->errors, SEVERITY_ERROR, node->offset, node->line, node->column,
+                            "no method '%.*s' on struct '%s'",
+                            (int)method_name_size, method_name, type_name(struct_type));
                 break;
             }
-        }
-
-        if (!method_node) {
+        } else if (iface_type) {
+            NodeList* sigs = iface_type->as.interface_type.method_sigs;
+            for (size_t i = 0; i < sigs->count; i++) {
+                Node* m = sigs->nodes[i];
+                if (m->type == NODE_FUNC_DECL &&
+                    m->as.func_decl.name_size == method_name_size &&
+                    memcmp(m->as.func_decl.name, method_name, method_name_size) == 0) {
+                    method_node = m;
+                    break;
+                }
+            }
+            if (!method_node) {
+                errors_push(ctx->errors, SEVERITY_ERROR, node->offset, node->line, node->column,
+                            "no method '%.*s' on interface '%s'",
+                            (int)method_name_size, method_name, type_name(iface_type));
+                break;
+            }
+        } else {
             errors_push(ctx->errors, SEVERITY_ERROR, node->offset, node->line, node->column,
-                        "no method '%.*s' on struct '%s'",
-                        (int)method_name_size, method_name, type_name(struct_type));
+                        "cannot call method on type '%s'", type_name(obj_type));
             break;
         }
 

@@ -30,6 +30,10 @@ static Module* module_graph_add(ModuleGraph* graph) {
     m->name = NULL;
     m->path = NULL;
     m->ast = NULL;
+    m->symbols = NULL;
+    m->impl_pairs.pairs = NULL;
+    m->impl_pairs.count = 0;
+    m->impl_pairs.capacity = 0;
     if (!graph->first) {
         graph->first = m;
     } else {

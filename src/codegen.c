@@ -46,6 +46,12 @@ static void emit_method_mangled(CodeGen* gen, FILE* f,
             (int)sname_size, sname, (int)mname_size, mname);
 }
 
+// Emit mangled interface name: anc__{pkg}__{mod}__{InterfaceName}
+static void emit_iface_mangled(CodeGen* gen, FILE* f, Type* iface) {
+    fprintf(f, "anc__%s__%s__%.*s", gen->pkg->name, gen->mod->name,
+            (int)iface->as.interface_type.name_size, iface->as.interface_type.name);
+}
+
 static void emit_type(CodeGen* gen, FILE* f, Type* type) {
     if (!type) { fprintf(f, "void"); return; }
 
@@ -66,7 +72,8 @@ static void emit_type(CodeGen* gen, FILE* f, Type* type) {
         emit_mangled(gen, f, type->as.struct_type.name, type->as.struct_type.name_size);
         break;
     case TYPE_INTERFACE:
-        fprintf(f, "void*");
+        emit_iface_mangled(gen, f, type);
+        fprintf(f, "__ref");
         break;
     case TYPE_FUNC:
         // shouldn't appear as a C type directly
@@ -74,7 +81,8 @@ static void emit_type(CodeGen* gen, FILE* f, Type* type) {
         break;
     case TYPE_REF:
         if (type->as.ref_type.inner && type->as.ref_type.inner->kind == TYPE_INTERFACE) {
-            fprintf(f, "void*");
+            emit_iface_mangled(gen, f, type->as.ref_type.inner);
+            fprintf(f, "__ref");
         } else {
             emit_type(gen, f, type->as.ref_type.inner);
             fprintf(f, "*");
@@ -82,7 +90,8 @@ static void emit_type(CodeGen* gen, FILE* f, Type* type) {
         break;
     case TYPE_PTR:
         if (type->as.ptr_type.inner && type->as.ptr_type.inner->kind == TYPE_INTERFACE) {
-            fprintf(f, "void*");
+            emit_iface_mangled(gen, f, type->as.ptr_type.inner);
+            fprintf(f, "__ref*");
         } else {
             emit_type(gen, f, type->as.ptr_type.inner);
             fprintf(f, "*");
@@ -208,12 +217,59 @@ static void emit_expr(CodeGen* gen, FILE* f, Node* node) {
         break;
 
     case NODE_CALL_EXPR: {
-        emit_expr(gen, f, node->as.call_expr.callee);
+        // get the callee's function type to check for interface params
+        Node* callee = node->as.call_expr.callee;
+        Type* callee_type = get_type(callee);
+
+        emit_expr(gen, f, callee);
         fprintf(f, "(");
         NodeList* args = &node->as.call_expr.args;
         for (size_t i = 0; i < args->count; i++) {
             if (i > 0) fprintf(f, ", ");
-            emit_expr(gen, f, args->nodes[i]);
+
+            // check if this arg needs fat pointer wrapping
+            Type* arg_type = get_type(args->nodes[i]);
+            Type* param_type = NULL;
+            if (callee_type && callee_type->kind == TYPE_FUNC &&
+                (int)i < callee_type->as.func_type.param_count) {
+                param_type = callee_type->as.func_type.param_types[i];
+            }
+
+            // detect &Struct passed where &Interface expected
+            Type* param_iface = NULL;
+            Type* arg_struct = NULL;
+            if (param_type && arg_type) {
+                // unwrap ref/ptr to get inner types
+                if (param_type->kind == TYPE_REF && param_type->as.ref_type.inner &&
+                    param_type->as.ref_type.inner->kind == TYPE_INTERFACE) {
+                    param_iface = param_type->as.ref_type.inner;
+                }
+                if (arg_type->kind == TYPE_REF && arg_type->as.ref_type.inner &&
+                    arg_type->as.ref_type.inner->kind == TYPE_STRUCT) {
+                    arg_struct = arg_type->as.ref_type.inner;
+                }
+            }
+
+            if (param_iface && arg_struct) {
+                // emit fat pointer: (Interface__ref){ .data = <arg_expr>, .vtable = &struct__iface__vtable }
+                fprintf(f, "(");
+                emit_iface_mangled(gen, f, param_iface);
+                fprintf(f, "__ref){ .data = ");
+                emit_expr(gen, f, args->nodes[i]);
+                fprintf(f, ", .vtable = &");
+                // vtable instance name: anc__{pkg}__{mod}__{Struct}__{Interface}__vtable
+                // use the struct's module for mangling
+                Module* saved = gen->mod;
+                gen->mod = arg_struct->as.struct_type.module;
+                emit_mangled(gen, f, arg_struct->as.struct_type.name,
+                             arg_struct->as.struct_type.name_size);
+                gen->mod = saved;
+                fprintf(f, "__%.*s__vtable }",
+                        (int)param_iface->as.interface_type.name_size,
+                        param_iface->as.interface_type.name);
+            } else {
+                emit_expr(gen, f, args->nodes[i]);
+            }
         }
         fprintf(f, ")");
         break;
@@ -233,37 +289,58 @@ static void emit_expr(CodeGen* gen, FILE* f, Node* node) {
     case NODE_METHOD_CALL: {
         Node* object = node->as.method_call.object;
         Type* obj_type = get_type(object);
-        Type* struct_type = NULL;
+        Type* inner_type = NULL;
 
         if (obj_type) {
-            if (obj_type->kind == TYPE_STRUCT) struct_type = obj_type;
-            else if (obj_type->kind == TYPE_REF) struct_type = obj_type->as.ref_type.inner;
-            else if (obj_type->kind == TYPE_PTR) struct_type = obj_type->as.ptr_type.inner;
+            if (obj_type->kind == TYPE_STRUCT || obj_type->kind == TYPE_INTERFACE)
+                inner_type = obj_type;
+            else if (obj_type->kind == TYPE_REF) inner_type = obj_type->as.ref_type.inner;
+            else if (obj_type->kind == TYPE_PTR) inner_type = obj_type->as.ptr_type.inner;
         }
 
-        if (struct_type && struct_type->kind == TYPE_STRUCT) {
+        if (inner_type && inner_type->kind == TYPE_INTERFACE) {
+            // vtable dispatch: obj.vtable->method(obj.data, args...)
+            emit_expr(gen, f, object);
+            fprintf(f, ".vtable->%.*s(",
+                    (int)node->as.method_call.method_name_size,
+                    node->as.method_call.method_name);
+            emit_expr(gen, f, object);
+            fprintf(f, ".data");
+            NodeList* args = &node->as.method_call.args;
+            for (size_t i = 0; i < args->count; i++) {
+                fprintf(f, ", ");
+                emit_expr(gen, f, args->nodes[i]);
+            }
+            fprintf(f, ")");
+        } else if (inner_type && inner_type->kind == TYPE_STRUCT) {
             emit_method_mangled(gen, f,
-                struct_type->as.struct_type.name, struct_type->as.struct_type.name_size,
+                inner_type->as.struct_type.name, inner_type->as.struct_type.name_size,
                 node->as.method_call.method_name, node->as.method_call.method_name_size);
+            fprintf(f, "(");
+            // first arg is &object (or object if already a pointer)
+            bool is_ptr = obj_type && (obj_type->kind == TYPE_REF || obj_type->kind == TYPE_PTR);
+            if (!is_ptr) fprintf(f, "&");
+            emit_expr(gen, f, object);
+            NodeList* args = &node->as.method_call.args;
+            for (size_t i = 0; i < args->count; i++) {
+                fprintf(f, ", ");
+                emit_expr(gen, f, args->nodes[i]);
+            }
+            fprintf(f, ")");
         } else {
             // fallback
-            fprintf(f, "%.*s", (int)node->as.method_call.method_name_size,
+            fprintf(f, "%.*s(", (int)node->as.method_call.method_name_size,
                     node->as.method_call.method_name);
+            bool is_ptr = obj_type && (obj_type->kind == TYPE_REF || obj_type->kind == TYPE_PTR);
+            if (!is_ptr) fprintf(f, "&");
+            emit_expr(gen, f, object);
+            NodeList* args = &node->as.method_call.args;
+            for (size_t i = 0; i < args->count; i++) {
+                fprintf(f, ", ");
+                emit_expr(gen, f, args->nodes[i]);
+            }
+            fprintf(f, ")");
         }
-
-        fprintf(f, "(");
-        // first arg is &object (or object if already a pointer)
-        bool is_ptr = obj_type && (obj_type->kind == TYPE_REF || obj_type->kind == TYPE_PTR);
-        if (!is_ptr) fprintf(f, "&");
-        emit_expr(gen, f, object);
-
-        // remaining args
-        NodeList* args = &node->as.method_call.args;
-        for (size_t i = 0; i < args->count; i++) {
-            fprintf(f, ", ");
-            emit_expr(gen, f, args->nodes[i]);
-        }
-        fprintf(f, ")");
         break;
     }
 
@@ -551,6 +628,141 @@ static void emit_method_signature(CodeGen* gen, FILE* f, Node* method_node,
 }
 
 // ---------------------------------------------------------------------------
+// Interface vtable emission
+// ---------------------------------------------------------------------------
+
+// Emit vtable struct typedef and fat pointer ref typedef for an interface
+static void emit_interface_typedefs(CodeGen* gen, FILE* f, Type* iface) {
+    NodeList* sigs = iface->as.interface_type.method_sigs;
+
+    // vtable struct
+    fprintf(f, "typedef struct ");
+    emit_iface_mangled(gen, f, iface);
+    fprintf(f, "__vtable {\n");
+    for (size_t i = 0; i < sigs->count; i++) {
+        Node* sig = sigs->nodes[i];
+        if (sig->type != NODE_FUNC_DECL) continue;
+        Type* sig_type = get_type(sig);
+        fprintf(f, "    ");
+        // return type
+        if (sig_type && sig_type->kind == TYPE_FUNC) {
+            emit_type(gen, f, sig_type->as.func_type.return_type);
+        } else {
+            fprintf(f, "void");
+        }
+        fprintf(f, " (*%.*s)(void* self",
+                (int)sig->as.func_decl.name_size, sig->as.func_decl.name);
+        // extra params
+        if (sig_type && sig_type->kind == TYPE_FUNC) {
+            for (int j = 0; j < sig_type->as.func_type.param_count; j++) {
+                fprintf(f, ", ");
+                emit_type(gen, f, sig_type->as.func_type.param_types[j]);
+                fprintf(f, " %.*s",
+                        (int)sig->as.func_decl.params.params[j].name_size,
+                        sig->as.func_decl.params.params[j].name);
+            }
+        }
+        fprintf(f, ");\n");
+    }
+    fprintf(f, "} ");
+    emit_iface_mangled(gen, f, iface);
+    fprintf(f, "__vtable;\n\n");
+
+    // fat pointer ref struct
+    fprintf(f, "typedef struct ");
+    emit_iface_mangled(gen, f, iface);
+    fprintf(f, "__ref {\n");
+    fprintf(f, "    void* data;\n");
+    fprintf(f, "    ");
+    emit_iface_mangled(gen, f, iface);
+    fprintf(f, "__vtable* vtable;\n");
+    fprintf(f, "} ");
+    emit_iface_mangled(gen, f, iface);
+    fprintf(f, "__ref;\n\n");
+}
+
+// Emit wrapper functions and vtable instance for a (struct, interface) pair
+static void emit_vtable_instance(CodeGen* gen, FILE* f, ImplPair* pair) {
+    Type* st = pair->struct_type;
+    Type* iface = pair->interface_type;
+    NodeList* sigs = iface->as.interface_type.method_sigs;
+
+    // use the struct's module for mangling the wrapper and struct method names
+    Module* saved = gen->mod;
+    gen->mod = pair->struct_module;
+
+    // emit wrapper functions
+    for (size_t i = 0; i < sigs->count; i++) {
+        Node* sig = sigs->nodes[i];
+        if (sig->type != NODE_FUNC_DECL) continue;
+        Type* sig_type = get_type(sig);
+
+        fprintf(f, "static ");
+        if (sig_type && sig_type->kind == TYPE_FUNC) {
+            emit_type(gen, f, sig_type->as.func_type.return_type);
+        } else {
+            fprintf(f, "void");
+        }
+        fprintf(f, " ");
+        emit_mangled(gen, f, st->as.struct_type.name, st->as.struct_type.name_size);
+        fprintf(f, "__%.*s__wrapper(void* self",
+                (int)sig->as.func_decl.name_size, sig->as.func_decl.name);
+        if (sig_type && sig_type->kind == TYPE_FUNC) {
+            for (int j = 0; j < sig_type->as.func_type.param_count; j++) {
+                fprintf(f, ", ");
+                emit_type(gen, f, sig_type->as.func_type.param_types[j]);
+                fprintf(f, " %.*s",
+                        (int)sig->as.func_decl.params.params[j].name_size,
+                        sig->as.func_decl.params.params[j].name);
+            }
+        }
+        fprintf(f, ") {\n");
+        fprintf(f, "    return ");
+        emit_method_mangled(gen, f,
+            st->as.struct_type.name, st->as.struct_type.name_size,
+            sig->as.func_decl.name, sig->as.func_decl.name_size);
+        fprintf(f, "((");
+        emit_mangled(gen, f, st->as.struct_type.name, st->as.struct_type.name_size);
+        fprintf(f, "*)self");
+        if (sig_type && sig_type->kind == TYPE_FUNC) {
+            for (int j = 0; j < sig_type->as.func_type.param_count; j++) {
+                fprintf(f, ", %.*s",
+                        (int)sig->as.func_decl.params.params[j].name_size,
+                        sig->as.func_decl.params.params[j].name);
+            }
+        }
+        fprintf(f, ");\n");
+        fprintf(f, "}\n\n");
+    }
+
+    // emit vtable instance
+    gen->mod = saved; // use current module for interface name
+    fprintf(f, "static ");
+    emit_iface_mangled(gen, f, iface);
+    fprintf(f, "__vtable ");
+    gen->mod = pair->struct_module; // use struct module for struct name
+    emit_mangled(gen, f, st->as.struct_type.name, st->as.struct_type.name_size);
+    gen->mod = saved;
+    fprintf(f, "__%.*s__vtable = {\n",
+            (int)iface->as.interface_type.name_size, iface->as.interface_type.name);
+
+    for (size_t i = 0; i < sigs->count; i++) {
+        Node* sig = sigs->nodes[i];
+        if (sig->type != NODE_FUNC_DECL) continue;
+        fprintf(f, "    .%.*s = ",
+                (int)sig->as.func_decl.name_size, sig->as.func_decl.name);
+        gen->mod = pair->struct_module;
+        emit_mangled(gen, f, st->as.struct_type.name, st->as.struct_type.name_size);
+        gen->mod = saved;
+        fprintf(f, "__%.*s__wrapper",
+                (int)sig->as.func_decl.name_size, sig->as.func_decl.name);
+        fprintf(f, ",\n");
+    }
+
+    fprintf(f, "};\n\n");
+}
+
+// ---------------------------------------------------------------------------
 // .h file generation
 // ---------------------------------------------------------------------------
 
@@ -693,6 +905,14 @@ static void emit_c_file(CodeGen* gen) {
         fprintf(f, ";\n\n");
     }
 
+    // interface vtable and fat pointer typedefs
+    for (Symbol* sym = gen->mod->symbols->first; sym; sym = sym->next) {
+        if (sym->kind != SYMBOL_INTERFACE || !sym->node) continue;
+        Type* iface_type = get_type(sym->node);
+        if (!iface_type || iface_type->kind != TYPE_INTERFACE) continue;
+        emit_interface_typedefs(gen, f, iface_type);
+    }
+
     // pass 2: static forward declarations for non-exported functions
     for (Symbol* sym = gen->mod->symbols->first; sym; sym = sym->next) {
         if (sym->kind != SYMBOL_FUNC || sym->is_export || !sym->node) continue;
@@ -717,6 +937,12 @@ static void emit_c_file(CodeGen* gen) {
         }
     }
     fprintf(f, "\n");
+
+    // vtable wrapper functions and instances
+    ImplPairList* impl_pairs = &gen->mod->impl_pairs;
+    for (size_t i = 0; i < impl_pairs->count; i++) {
+        emit_vtable_instance(gen, f, &impl_pairs->pairs[i]);
+    }
 
     // pass 3: const/var definitions
     for (Symbol* sym = gen->mod->symbols->first; sym; sym = sym->next) {

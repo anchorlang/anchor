@@ -8,6 +8,19 @@
 #include <stdbool.h>
 
 typedef struct SymbolTable SymbolTable;
+typedef struct Type Type;
+
+typedef struct ImplPair {
+    Type* struct_type;
+    Type* interface_type;
+    struct Module* struct_module;
+} ImplPair;
+
+typedef struct ImplPairList {
+    ImplPair* pairs;
+    size_t count;
+    size_t capacity;
+} ImplPairList;
 
 typedef struct Module {
     struct Module* next;
@@ -15,6 +28,7 @@ typedef struct Module {
     char* path;
     Node* ast;
     SymbolTable* symbols;
+    ImplPairList impl_pairs;
 } Module;
 
 typedef struct ModuleGraph {
