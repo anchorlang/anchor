@@ -159,6 +159,19 @@ static void elseif_list_push(Arena* arena, ElseIfList* list, ElseIfBranch branch
     list->branches[list->count++] = branch;
 }
 
+static void import_name_list_push(Arena* arena, ImportNameList* list, ImportName name) {
+    if (list->count >= list->capacity) {
+        size_t new_cap = list->capacity < 8 ? 8 : list->capacity * 2;
+        ImportName* new_names = arena_alloc(arena, new_cap * sizeof(ImportName));
+        if (list->names) {
+            memcpy(new_names, list->names, list->count * sizeof(ImportName));
+        }
+        list->names = new_names;
+        list->capacity = new_cap;
+    }
+    list->names[list->count++] = name;
+}
+
 static void match_case_list_push(Arena* arena, MatchCaseList* list, MatchCase mc) {
     if (list->count >= list->capacity) {
         size_t new_cap = list->capacity < 8 ? 8 : list->capacity * 2;
@@ -955,6 +968,60 @@ static Node* parse_interface_decl(Parser* p) {
     return node;
 }
 
+static Node* parse_import_decl(Parser* p) {
+    Token* tok = advance(p); // consume FROM
+
+    // Parse module path: identifier with dots (e.g., math.vectors)
+    Token* path_tok = expect(p, TOKEN_IDENTIFIER, "Expected module name after 'from'.");
+    if (!path_tok) return NULL;
+
+    // Track start and end of the full path for dot-separated modules
+    char* path_start = path_tok->value;
+    char* path_end = path_tok->value + path_tok->size;
+
+    while (check(p, TOKEN_DOT)) {
+        advance(p); // consume '.'
+        Token* next = expect(p, TOKEN_IDENTIFIER, "Expected module name after '.'.");
+        if (!next) break;
+        path_end = next->value + next->size;
+    }
+
+    size_t path_size = (size_t)(path_end - path_start);
+
+    expect(p, TOKEN_IMPORT, "Expected 'import' after module path.");
+
+    Node* node = make_node(p, NODE_IMPORT_DECL, tok);
+    node->as.import_decl.module_path = path_start;
+    node->as.import_decl.module_path_size = path_size;
+    memset(&node->as.import_decl.names, 0, sizeof(ImportNameList));
+
+    // Parse comma-separated import names
+    Token* name_tok = expect(p, TOKEN_IDENTIFIER, "Expected name to import.");
+    if (name_tok) {
+        ImportName name = {0};
+        name.name = name_tok->value;
+        name.name_size = name_tok->size;
+        name.offset = name_tok->offset;
+        name.line = name_tok->line;
+        name.column = name_tok->column;
+        import_name_list_push(p->arena, &node->as.import_decl.names, name);
+
+        while (match(p, TOKEN_COMMA)) {
+            name_tok = expect(p, TOKEN_IDENTIFIER, "Expected name to import.");
+            if (!name_tok) break;
+            ImportName next = {0};
+            next.name = name_tok->value;
+            next.name_size = name_tok->size;
+            next.offset = name_tok->offset;
+            next.line = name_tok->line;
+            next.column = name_tok->column;
+            import_name_list_push(p->arena, &node->as.import_decl.names, next);
+        }
+    }
+
+    return node;
+}
+
 static Node* parse_export_declaration(Parser* p) {
     advance(p); // consume EXPORT
     if (check(p, TOKEN_CONST))  return parse_const_decl(p, true);
@@ -984,7 +1051,9 @@ static Node* parse_program(Parser* p) {
 
         Node* decl = NULL;
 
-        if (check(p, TOKEN_EXPORT)) {
+        if (check(p, TOKEN_FROM)) {
+            decl = parse_import_decl(p);
+        } else if (check(p, TOKEN_EXPORT)) {
             decl = parse_export_declaration(p);
         } else if (check(p, TOKEN_CONST)) {
             decl = parse_const_decl(p, false);
@@ -1097,6 +1166,17 @@ void ast_print(Node* node, int indent) {
         for (size_t i = 0; i < node->as.program.declarations.count; i++) {
             ast_print(node->as.program.declarations.nodes[i], indent + 1);
         }
+        break;
+
+    case NODE_IMPORT_DECL:
+        printf("ImportDecl [%zu:%zu] from %.*s import",
+               node->line, node->column,
+               (int)node->as.import_decl.module_path_size, node->as.import_decl.module_path);
+        for (size_t i = 0; i < node->as.import_decl.names.count; i++) {
+            ImportName* name = &node->as.import_decl.names.names[i];
+            printf("%s%.*s", i > 0 ? ", " : " ", (int)name->name_size, name->name);
+        }
+        printf("\n");
         break;
 
     case NODE_CONST_DECL:

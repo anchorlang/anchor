@@ -11,6 +11,7 @@ typedef enum NodeType {
     NODE_PROGRAM,
 
     // declarations
+    NODE_IMPORT_DECL,
     NODE_CONST_DECL,
     NODE_VAR_DECL,
     NODE_FUNC_DECL,
@@ -131,6 +132,20 @@ typedef struct MatchCaseList {
     size_t capacity;
 } MatchCaseList;
 
+typedef struct ImportName {
+    char* name;
+    size_t name_size;
+    size_t offset;
+    size_t line;
+    size_t column;
+} ImportName;
+
+typedef struct ImportNameList {
+    ImportName* names;
+    size_t count;
+    size_t capacity;
+} ImportNameList;
+
 struct Node {
     NodeType type;
     size_t offset;
@@ -140,6 +155,12 @@ struct Node {
 
     union {
         struct { NodeList declarations; } program;
+
+        struct {
+            char* module_path;
+            size_t module_path_size;
+            ImportNameList names;
+        } import_decl;
 
         struct {
             bool is_export;

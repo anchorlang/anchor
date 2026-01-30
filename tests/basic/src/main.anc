@@ -9,6 +9,7 @@
 #   float (float), double (double)
 # Each file transpile to .h and .c file.
 # In .h file are exported identifiers (via export keyword)
+from utils import sign
 
 # Generate to:
 # static const float anc__basic__main__PI = 3.14f;
@@ -224,4 +225,8 @@ end
 func test_interface(): int
     var pair = TestPair(a = 3, b = 9)
     return hash(&pair)
+end
+
+func test_imported_method(): int
+    return sign(4)
 end

@@ -97,6 +97,7 @@ static void lexer_read_identifier_or_keyword(Lexer* lexer) {
         else if (strncmp(start, "self", 4) == 0)    type = TOKEN_SELF;
         else if (strncmp(start, "null", 4) == 0)    type = TOKEN_NULL;
         else if (strncmp(start, "true", 4) == 0)    type = TOKEN_TRUE;
+        else if (strncmp(start, "from", 4) == 0)    type = TOKEN_FROM;
         break;
     case 5:
         if (strncmp(start, "const", 5) == 0)        type = TOKEN_CONST;
@@ -111,6 +112,7 @@ static void lexer_read_identifier_or_keyword(Lexer* lexer) {
         else if (strncmp(start, "export", 6) == 0)  type = TOKEN_EXPORT;
         else if (strncmp(start, "elseif", 6) == 0)  type = TOKEN_ELSEIF;
         else if (strncmp(start, "struct", 6) == 0)  type = TOKEN_STRUCT;
+        else if (strncmp(start, "import", 6) == 0)  type = TOKEN_IMPORT;
         break;
     case 9:
         if (strncmp(start, "interface", 9) == 0)    type = TOKEN_INTERFACE;
@@ -342,6 +344,8 @@ void lexer_print(Tokens* tokens) {
         [TOKEN_NULL] = "NULL",
         [TOKEN_TRUE] = "TRUE",
         [TOKEN_FALSE] = "FALSE",
+        [TOKEN_FROM] = "FROM",
+        [TOKEN_IMPORT] = "IMPORT",
         [TOKEN_PLUS] = "PLUS",
         [TOKEN_MINUS] = "MINUS",
         [TOKEN_STAR] = "STAR",
