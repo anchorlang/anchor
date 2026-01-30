@@ -244,3 +244,10 @@ func test_usize(): usize
     var size: usize = 5
     return size
 end
+
+func test_string(): string
+    var str = "test"
+    var ptr: *byte = str.ptr
+    var len: usize = str.len
+    return str
+end

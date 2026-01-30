@@ -69,7 +69,7 @@ static void emit_type(CodeGen* gen, FILE* f, Type* type) {
     case TYPE_USIZE:  fprintf(f, "size_t"); break;
     case TYPE_FLOAT:  fprintf(f, "float"); break;
     case TYPE_DOUBLE: fprintf(f, "double"); break;
-    case TYPE_STRING: fprintf(f, "const char*"); break;
+    case TYPE_STRING: fprintf(f, "anc__string"); break;
     case TYPE_STRUCT:
         emit_mangled(gen, f, type->as.struct_type.name, type->as.struct_type.name_size);
         break;
@@ -135,10 +135,14 @@ static void emit_expr(CodeGen* gen, FILE* f, Node* node) {
                 node->as.float_literal.value);
         break;
 
-    case NODE_STRING_LITERAL:
-        fprintf(f, "\"%.*s\"", (int)node->as.string_literal.value_size,
-                node->as.string_literal.value);
+    case NODE_STRING_LITERAL: {
+        char* val = node->as.string_literal.value;
+        size_t val_size = node->as.string_literal.value_size;
+        size_t str_len = val_size - 2;  // subtract both quote chars
+        fprintf(f, "(anc__string){ .ptr = (uint8_t*)%.*s, .len = %zu }",
+                (int)val_size, val, str_len);
         break;
+    }
 
     case NODE_BOOL_LITERAL:
         fprintf(f, node->as.bool_literal.value ? "true" : "false");
@@ -777,7 +781,17 @@ static void emit_h_file(CodeGen* gen) {
 
     // standard includes
     fprintf(f, "#include <stdint.h>\n");
-    fprintf(f, "#include <stdbool.h>\n\n");
+    fprintf(f, "#include <stdbool.h>\n");
+    fprintf(f, "#include <stddef.h>\n\n");
+
+    // anc__string fat pointer typedef (guarded to avoid redefinition across headers)
+    fprintf(f, "#ifndef ANC__STRING_DEFINED\n");
+    fprintf(f, "#define ANC__STRING_DEFINED\n");
+    fprintf(f, "typedef struct anc__string {\n");
+    fprintf(f, "    uint8_t* ptr;\n");
+    fprintf(f, "    size_t len;\n");
+    fprintf(f, "} anc__string;\n");
+    fprintf(f, "#endif\n\n");
 
     // pass 1: exported struct typedefs
     for (Symbol* sym = gen->mod->symbols->first; sym; sym = sym->next) {

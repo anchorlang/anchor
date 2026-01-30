@@ -705,6 +705,23 @@ static Type* check_expr(CheckContext* ctx, Node* node) {
         Type* obj_type = check_expr(ctx, node->as.field_access.object);
         if (!obj_type) break;
 
+        char* field_name = node->as.field_access.field_name;
+        size_t field_name_size = node->as.field_access.field_name_size;
+
+        // string fat pointer fields: .ptr and .len
+        if (obj_type->kind == TYPE_STRING) {
+            if (field_name_size == 3 && memcmp(field_name, "ptr", 3) == 0) {
+                result = type_ptr(ctx->reg, type_byte(ctx->reg));
+            } else if (field_name_size == 3 && memcmp(field_name, "len", 3) == 0) {
+                result = type_usize(ctx->reg);
+            } else {
+                errors_push(ctx->errors, SEVERITY_ERROR, node->offset, node->line, node->column,
+                            "no field '%.*s' on type 'string'",
+                            (int)field_name_size, field_name);
+            }
+            break;
+        }
+
         Type* struct_type = unwrap_to_struct(obj_type);
         if (!struct_type) {
             errors_push(ctx->errors, SEVERITY_ERROR, node->offset, node->line, node->column,
@@ -712,8 +729,6 @@ static Type* check_expr(CheckContext* ctx, Node* node) {
             break;
         }
 
-        char* field_name = node->as.field_access.field_name;
-        size_t field_name_size = node->as.field_access.field_name_size;
         FieldList* fields = struct_type->as.struct_type.fields;
 
         for (size_t i = 0; i < fields->count; i++) {
