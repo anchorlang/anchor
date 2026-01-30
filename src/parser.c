@@ -214,6 +214,7 @@ static Node* parse_type(Parser* p);
 static NodeList parse_body(Parser* p);
 static Node* parse_statement(Parser* p);
 static Node* parse_var_decl(Parser* p, bool is_export);
+static Node* parse_const_decl(Parser* p, bool is_export);
 static Node* parse_func_decl(Parser* p, bool is_export);
 
 // ---------------------------------------------------------------------------
@@ -752,6 +753,7 @@ static Node* parse_assignment_or_expr_stmt(Parser* p) {
 static Node* parse_statement(Parser* p) {
     switch (peek(p)->type) {
     case TOKEN_VAR:    return parse_var_decl(p, false);
+    case TOKEN_CONST:  return parse_const_decl(p, false);
     case TOKEN_RETURN: return parse_return_stmt(p);
     case TOKEN_IF:     return parse_if_stmt(p);
     case TOKEN_FOR:    return parse_for_stmt(p);
