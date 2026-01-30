@@ -2,6 +2,7 @@
 #include "lexer.h"
 #include "parser.h"
 #include "module.h"
+#include "sema.h"
 #include "package.h"
 #include "fs.h"
 #include "error.h"
@@ -126,10 +127,23 @@ int main(int argc, char** argv) {
             return EXIT_FAILURE;
         }
 
+        sema_collect_symbols(&arena, &errors, &graph);
+
         printf("package: %s\n", pkg.name);
         printf("modules: %d\n", graph.count);
         for (Module* m = graph.first; m; m = m->next) {
             printf("  %s (%s)\n", m->name, m->path);
+            if (m->symbols) {
+                static const char* kind_names[] = {
+                    "FUNC", "STRUCT", "INTERFACE", "CONST", "VAR", "IMPORT"
+                };
+                for (Symbol* s = m->symbols->first; s; s = s->next) {
+                    printf("    %s %.*s", kind_names[s->kind], (int)s->name_size, s->name);
+                    if (s->is_export) printf(" [export]");
+                    if (s->source) printf(" <- %s", s->source->name);
+                    printf("\n");
+                }
+            }
         }
 
         for (Error* error = errors.first; error; error = error->next) {

@@ -7,11 +7,14 @@
 
 #include <stdbool.h>
 
+typedef struct SymbolTable SymbolTable;
+
 typedef struct Module {
     struct Module* next;
     char* name;
     char* path;
     Node* ast;
+    SymbolTable* symbols;
 } Module;
 
 typedef struct ModuleGraph {
