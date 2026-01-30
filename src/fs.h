@@ -27,6 +27,8 @@ char* file_read(Arena* arena, char* path, size_t* out_size);
 
 bool has_extension(char* path, char* extension);
 
+bool dir_ensure(char* path);
+
 bool dir_iter_open(DirIter* iter, char* dir);
 
 bool dir_iter_next(DirIter* iter);

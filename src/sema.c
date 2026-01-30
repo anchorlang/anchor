@@ -26,7 +26,7 @@ static Symbol* symbol_add(Arena* arena, SymbolTable* table, SymbolKind kind,
     return sym;
 }
 
-static Symbol* symbol_find(SymbolTable* table, char* name, size_t name_size) {
+Symbol* symbol_find(SymbolTable* table, char* name, size_t name_size) {
     for (Symbol* s = table->first; s; s = s->next) {
         if (s->name_size == name_size && memcmp(s->name, name, name_size) == 0) {
             return s;
@@ -245,6 +245,15 @@ static void resolve_module_types(Arena* arena, Errors* errors,
                 &sym->node->as.struct_decl.fields,
                 &sym->node->as.struct_decl.methods);
             sym->node->resolved_type = t;
+
+            // resolve field type nodes
+            FieldList* fields = &sym->node->as.struct_decl.fields;
+            for (size_t i = 0; i < fields->count; i++) {
+                if (fields->fields[i].type_node) {
+                    fields->fields[i].type_node->resolved_type =
+                        resolve_type_node(reg, errors, mod->symbols, fields->fields[i].type_node);
+                }
+            }
             break;
         }
         case SYMBOL_INTERFACE: {
@@ -379,9 +388,17 @@ static Type* check_expr(CheckContext* ctx, Node* node) {
         result = type_int(ctx->reg);
         break;
 
-    case NODE_FLOAT_LITERAL:
-        result = type_float(ctx->reg);
+    case NODE_FLOAT_LITERAL: {
+        // 3.14f → float, 6.28 → double
+        char* val = node->as.float_literal.value;
+        size_t val_size = node->as.float_literal.value_size;
+        if (val_size > 0 && (val[val_size - 1] == 'f' || val[val_size - 1] == 'F')) {
+            result = type_float(ctx->reg);
+        } else {
+            result = type_double(ctx->reg);
+        }
         break;
+    }
 
     case NODE_STRING_LITERAL:
         result = type_string(ctx->reg);

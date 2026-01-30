@@ -39,5 +39,6 @@ typedef struct SymbolTable {
 typedef struct ModuleGraph ModuleGraph;
 
 void sema_analyze(Arena* arena, Errors* errors, ModuleGraph* graph);
+Symbol* symbol_find(SymbolTable* table, char* name, size_t name_size);
 
 #endif

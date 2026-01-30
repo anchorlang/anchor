@@ -9,6 +9,7 @@ set (CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 add_executable (ancc
     "src/arena.c"
+    "src/codegen.c"
     "src/error.c"
     "src/fs.c"
     "src/lexer.c"

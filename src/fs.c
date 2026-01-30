@@ -17,6 +17,11 @@ bool file_exists(char* path) {
     DWORD attr = GetFileAttributesA(path);
     return attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY);
 }
+
+bool dir_ensure(char* path) {
+    if (dir_exists(path)) return true;
+    return CreateDirectoryA(path, NULL) != 0;
+}
 #else
 #include <sys/stat.h>
 #include <dirent.h>
@@ -29,6 +34,11 @@ bool dir_exists(char* path) {
 bool file_exists(char* path) {
     struct stat st;
     return stat(path, &st) == 0 && S_ISREG(st.st_mode);
+}
+
+bool dir_ensure(char* path) {
+    if (dir_exists(path)) return true;
+    return mkdir(path, 0755) == 0;
 }
 #endif
 

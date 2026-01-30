@@ -3,6 +3,7 @@
 #include "parser.h"
 #include "module.h"
 #include "sema.h"
+#include "codegen.h"
 #include "package.h"
 #include "fs.h"
 #include "error.h"
@@ -128,6 +129,12 @@ int main(int argc, char** argv) {
         }
 
         sema_analyze(&arena, &errors, &graph);
+
+        if (errors.count == 0) {
+            char output_dir[1024];
+            snprintf(output_dir, sizeof(output_dir), "%s/build", dir);
+            codegen(&arena, &errors, &pkg, &graph, output_dir);
+        }
 
         printf("package: %s\n", pkg.name);
         printf("modules: %d\n", graph.count);
