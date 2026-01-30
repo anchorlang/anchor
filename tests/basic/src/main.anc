@@ -230,3 +230,7 @@ end
 func test_imported_method(): int
     return sign(4)
 end
+
+func test_short(): ushort
+    return 4
+end
