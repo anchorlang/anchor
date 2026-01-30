@@ -1,5 +1,6 @@
 #include "arena.h"
 #include "lexer.h"
+#include "parser.h"
 #include "fs.h"
 #include "error.h"
 
@@ -46,6 +47,40 @@ int main(int argc, char** argv) {
         lexer_tokenize(&arena, &tokens, &errors, buffer, buffer_size);
 
         lexer_print(&tokens);
+
+        for (Error* error = errors.first; error; error = error->next) {
+            fprintf(stderr, "%zu:%zu: %s\n", error->line, error->column, error->message);
+        }
+
+        arena_free(&arena);
+        return errors.count > 0 ? EXIT_FAILURE : EXIT_SUCCESS;
+    }
+
+    if (strcmp(argv[1], "ast") == 0) {
+        if (argc < 3) {
+            fprintf(stderr, "Usage: ancc ast [file]\n");
+            return EXIT_FAILURE;
+        }
+
+        Arena arena;
+        arena_init(&arena, 16 * 1024 * 1024);
+
+        size_t buffer_size;
+        char* buffer = file_read(&arena, argv[2], &buffer_size);
+        if (!buffer) {
+            fprintf(stderr, "Error: File not found '%s'.\n", argv[2]);
+            arena_free(&arena);
+            return EXIT_FAILURE;
+        }
+
+        Errors errors;
+        errors_init(&arena, &errors);
+
+        Tokens tokens;
+        lexer_tokenize(&arena, &tokens, &errors, buffer, buffer_size);
+
+        Node* ast = parser_parse(&arena, &tokens, &errors);
+        ast_print(ast, 0);
 
         for (Error* error = errors.first; error; error = error->next) {
             fprintf(stderr, "%zu:%zu: %s\n", error->line, error->column, error->message);

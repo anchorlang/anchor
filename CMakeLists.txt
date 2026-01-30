@@ -12,5 +12,6 @@ add_executable (ancc
     "src/error.c"
     "src/fs.c"
     "src/lexer.c"
+    "src/parser.c"
     "src/main.c"
 )
