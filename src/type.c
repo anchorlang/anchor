@@ -138,7 +138,56 @@ static int type_name_write(Type* type, char* buf, int size) {
 }
 
 const char* type_name(Type* type) {
-    static char buf[256];
-    type_name_write(type, buf, sizeof(buf));
+    static char bufs[4][256];
+    static int idx = 0;
+    char* buf = bufs[idx];
+    idx = (idx + 1) % 4;
+    type_name_write(type, buf, 256);
     return buf;
+}
+
+bool type_equals(Type* a, Type* b) {
+    if (a == b) return true;
+    if (!a || !b) return false;
+    if (a->kind != b->kind) return false;
+
+    switch (a->kind) {
+    case TYPE_REF:
+        return type_equals(a->as.ref_type.inner, b->as.ref_type.inner);
+    case TYPE_PTR:
+        return type_equals(a->as.ptr_type.inner, b->as.ptr_type.inner);
+    case TYPE_FUNC: {
+        if (a->as.func_type.param_count != b->as.func_type.param_count) return false;
+        if (!type_equals(a->as.func_type.return_type, b->as.func_type.return_type)) return false;
+        for (int i = 0; i < a->as.func_type.param_count; i++) {
+            if (!type_equals(a->as.func_type.param_types[i], b->as.func_type.param_types[i]))
+                return false;
+        }
+        return true;
+    }
+    default:
+        // primitives, structs, interfaces: pointer equality already checked above
+        return false;
+    }
+}
+
+bool type_is_integer(Type* type) {
+    if (!type) return false;
+    switch (type->kind) {
+    case TYPE_BYTE:
+    case TYPE_SHORT:
+    case TYPE_USHORT:
+    case TYPE_INT:
+    case TYPE_UINT:
+    case TYPE_LONG:
+    case TYPE_ULONG:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool type_is_numeric(Type* type) {
+    if (!type) return false;
+    return type_is_integer(type) || type->kind == TYPE_FLOAT || type->kind == TYPE_DOUBLE;
 }

@@ -234,3 +234,7 @@ end
 func test_short(): ushort
     return 4
 end
+
+func test_and_or(a: int, b: int): bool
+    return (a < 6 and b > 9) or (a > 10 and b > 12) or a == 2
+end

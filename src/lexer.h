@@ -41,6 +41,9 @@ typedef enum TokenType {
     TOKEN_FALSE,
     TOKEN_FROM,
     TOKEN_IMPORT,
+    TOKEN_AND,
+    TOKEN_OR,
+    TOKEN_NOT,
 
     // arithmetic operators
     TOKEN_PLUS,

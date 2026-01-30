@@ -463,6 +463,14 @@ static Node* parse_unary(Parser* p) {
         node->as.unary_expr.operand = operand;
         return node;
     }
+    if (check(p, TOKEN_NOT)) {
+        Token* tok = advance(p);
+        Node* operand = parse_unary(p);
+        Node* node = make_node(p, NODE_UNARY_EXPR, tok);
+        node->as.unary_expr.op = TOKEN_NOT;
+        node->as.unary_expr.operand = operand;
+        return node;
+    }
     return parse_postfix(p);
 }
 
@@ -528,8 +536,38 @@ static Node* parse_comparison(Parser* p) {
     return left;
 }
 
+// Level 0b: logical and
+static Node* parse_and(Parser* p) {
+    Node* left = parse_comparison(p);
+    while (check(p, TOKEN_AND)) {
+        Token* op_tok = advance(p);
+        Node* right = parse_comparison(p);
+        Node* node = make_node(p, NODE_BINARY_EXPR, op_tok);
+        node->as.binary_expr.op = op_tok->type;
+        node->as.binary_expr.left = left;
+        node->as.binary_expr.right = right;
+        left = node;
+    }
+    return left;
+}
+
+// Level 0a: logical or (lowest precedence)
+static Node* parse_or(Parser* p) {
+    Node* left = parse_and(p);
+    while (check(p, TOKEN_OR)) {
+        Token* op_tok = advance(p);
+        Node* right = parse_and(p);
+        Node* node = make_node(p, NODE_BINARY_EXPR, op_tok);
+        node->as.binary_expr.op = op_tok->type;
+        node->as.binary_expr.left = left;
+        node->as.binary_expr.right = right;
+        left = node;
+    }
+    return left;
+}
+
 static Node* parse_expression(Parser* p) {
-    return parse_comparison(p);
+    return parse_or(p);
 }
 
 // ---------------------------------------------------------------------------
@@ -1136,6 +1174,9 @@ static const char* op_to_string(TokenType op) {
     case TOKEN_MINUS_ASSIGN:           return "-=";
     case TOKEN_STAR_ASSIGN:            return "*=";
     case TOKEN_SLASH_ASSIGN:           return "/=";
+    case TOKEN_AND:                    return "and";
+    case TOKEN_OR:                     return "or";
+    case TOKEN_NOT:                    return "not";
     default:                           return "?";
     }
 }

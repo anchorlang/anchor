@@ -4,6 +4,7 @@
 #include "arena.h"
 #include "ast.h"
 
+#include <stdbool.h>
 #include <stddef.h>
 
 typedef struct Module Module;
@@ -103,5 +104,8 @@ Type* type_ref(TypeRegistry* reg, Type* inner);
 Type* type_ptr(TypeRegistry* reg, Type* inner);
 
 const char* type_name(Type* type);
+bool type_equals(Type* a, Type* b);
+bool type_is_numeric(Type* type);
+bool type_is_integer(Type* type);
 
 #endif
