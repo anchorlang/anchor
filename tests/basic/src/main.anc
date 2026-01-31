@@ -274,6 +274,30 @@ func test_struct_casting(): int
     return pair2.b
 end
 
+func test_arrays(): int
+    var static_array: int[5] = [1, 2, 3, 4, 5]
+    var static_array2 = [5, 4, 3, 2, 1]
+
+    var slice: int[] = static_array
+    var copy = static_array2
+
+    var static_array_len = static_array.len
+    var static_array_ptr = static_array.ptr
+    var static_array_ptr2: *int = static_array.ptr
+
+    var slice_len = slice.len
+    var slice_ptr = slice.ptr
+    var slice_ptr2: *int = slice.ptr
+
+    var a = static_array[2]
+    var b: int = static_array2[3]
+
+    var c = slice[2]
+    var d: int = copy[2]
+
+    return static_array[2]
+end
+
 func main(): int
     return 5
 end

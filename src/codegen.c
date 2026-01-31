@@ -99,6 +99,13 @@ static void emit_type(CodeGen* gen, FILE* f, Type* type) {
             fprintf(f, "*");
         }
         break;
+    case TYPE_ARRAY:
+        // only emits element type; [N] suffix handled in var_decl
+        emit_type(gen, f, type->as.array_type.element);
+        break;
+    case TYPE_SLICE:
+        fprintf(f, "anc__slice");
+        break;
     }
 }
 
@@ -283,12 +290,39 @@ static void emit_expr(CodeGen* gen, FILE* f, Node* node) {
 
     case NODE_FIELD_ACCESS: {
         Type* obj_type = get_type(node->as.field_access.object);
+        char* fname = node->as.field_access.field_name;
+        size_t fname_size = node->as.field_access.field_name_size;
+
+        // array .len -> compile-time constant, .ptr -> array decays to pointer
+        if (obj_type && obj_type->kind == TYPE_ARRAY) {
+            if (fname_size == 3 && memcmp(fname, "len", 3) == 0) {
+                fprintf(f, "%d", obj_type->as.array_type.size);
+            } else if (fname_size == 3 && memcmp(fname, "ptr", 3) == 0) {
+                emit_expr(gen, f, node->as.field_access.object);
+            }
+            break;
+        }
+
+        // slice .len -> struct field, .ptr -> cast from void*
+        if (obj_type && obj_type->kind == TYPE_SLICE) {
+            if (fname_size == 3 && memcmp(fname, "ptr", 3) == 0) {
+                fprintf(f, "(");
+                emit_type(gen, f, obj_type->as.slice_type.element);
+                fprintf(f, "*)");
+                emit_expr(gen, f, node->as.field_access.object);
+                fprintf(f, ".ptr");
+            } else {
+                emit_expr(gen, f, node->as.field_access.object);
+                fprintf(f, ".%.*s", (int)fname_size, fname);
+            }
+            break;
+        }
+
         bool is_ptr = obj_type && (obj_type->kind == TYPE_REF || obj_type->kind == TYPE_PTR);
 
         emit_expr(gen, f, node->as.field_access.object);
         fprintf(f, "%s%.*s", is_ptr ? "->" : ".",
-                (int)node->as.field_access.field_name_size,
-                node->as.field_access.field_name);
+                (int)fname_size, fname);
         break;
     }
 
@@ -392,6 +426,38 @@ static void emit_expr(CodeGen* gen, FILE* f, Node* node) {
         break;
     }
 
+    case NODE_ARRAY_LITERAL: {
+        NodeList* elems = &node->as.array_literal.elements;
+        fprintf(f, "{ ");
+        for (size_t i = 0; i < elems->count; i++) {
+            if (i > 0) fprintf(f, ", ");
+            emit_expr(gen, f, elems->nodes[i]);
+        }
+        fprintf(f, " }");
+        break;
+    }
+
+    case NODE_INDEX_EXPR: {
+        Type* obj_type = get_type(node->as.index_expr.object);
+        if (obj_type && obj_type->kind == TYPE_SLICE) {
+            // ((element_type*)slice.ptr)[index]
+            fprintf(f, "((");
+            emit_type(gen, f, obj_type->as.slice_type.element);
+            fprintf(f, "*)");
+            emit_expr(gen, f, node->as.index_expr.object);
+            fprintf(f, ".ptr)[");
+            emit_expr(gen, f, node->as.index_expr.index);
+            fprintf(f, "]");
+        } else {
+            // array: direct C indexing
+            emit_expr(gen, f, node->as.index_expr.object);
+            fprintf(f, "[");
+            emit_expr(gen, f, node->as.index_expr.index);
+            fprintf(f, "]");
+        }
+        break;
+    }
+
     default:
         fprintf(f, "/* unsupported expr %d */", node->type);
         break;
@@ -409,13 +475,53 @@ static void emit_stmt(CodeGen* gen, FILE* f, Node* node) {
 
     case NODE_VAR_DECL: {
         Type* var_type = get_type(node);
+        Type* init_type = node->as.var_decl.value ? get_type(node->as.var_decl.value) : NULL;
+
+        // array variable: element_type name[size] = { ... } or memcpy
+        if (var_type && var_type->kind == TYPE_ARRAY) {
+            emit_indent(gen, f);
+            emit_type(gen, f, var_type->as.array_type.element);
+            fprintf(f, " %.*s[%d]",
+                    (int)node->as.var_decl.name_size, node->as.var_decl.name,
+                    var_type->as.array_type.size);
+            if (node->as.var_decl.value) {
+                if (node->as.var_decl.value->type == NODE_ARRAY_LITERAL) {
+                    fprintf(f, " = ");
+                    emit_expr(gen, f, node->as.var_decl.value);
+                    fprintf(f, ";\n");
+                } else {
+                    // array copy: declare then memcpy
+                    fprintf(f, ";\n");
+                    emit_indent(gen, f);
+                    fprintf(f, "memcpy(%.*s, ",
+                            (int)node->as.var_decl.name_size, node->as.var_decl.name);
+                    emit_expr(gen, f, node->as.var_decl.value);
+                    fprintf(f, ", sizeof(%.*s));\n",
+                            (int)node->as.var_decl.name_size, node->as.var_decl.name);
+                }
+            } else {
+                fprintf(f, ";\n");
+            }
+            break;
+        }
+
+        // slice from array: anc__slice name = (anc__slice){ .ptr = expr, .len = N }
+        if (var_type && var_type->kind == TYPE_SLICE &&
+            init_type && init_type->kind == TYPE_ARRAY) {
+            emit_indent(gen, f);
+            fprintf(f, "anc__slice %.*s = (anc__slice){ .ptr = ",
+                    (int)node->as.var_decl.name_size, node->as.var_decl.name);
+            emit_expr(gen, f, node->as.var_decl.value);
+            fprintf(f, ", .len = %d };\n", init_type->as.array_type.size);
+            break;
+        }
+
         emit_indent(gen, f);
         emit_type(gen, f, var_type);
         fprintf(f, " %.*s", (int)node->as.var_decl.name_size, node->as.var_decl.name);
         if (node->as.var_decl.value) {
             fprintf(f, " = ");
             // detect &Struct assigned to &Interface variable — emit fat pointer wrapper
-            Type* init_type = get_type(node->as.var_decl.value);
             Type* decl_iface = NULL;
             Type* init_struct = NULL;
             if (var_type && init_type) {
@@ -852,6 +958,14 @@ static void emit_h_file(CodeGen* gen) {
     fprintf(f, "} anc__string;\n");
     fprintf(f, "#endif\n\n");
 
+    fprintf(f, "#ifndef ANC__SLICE_DEFINED\n");
+    fprintf(f, "#define ANC__SLICE_DEFINED\n");
+    fprintf(f, "typedef struct anc__slice {\n");
+    fprintf(f, "    void* ptr;\n");
+    fprintf(f, "    size_t len;\n");
+    fprintf(f, "} anc__slice;\n");
+    fprintf(f, "#endif\n\n");
+
     // pass 1: exported struct typedefs
     for (Symbol* sym = gen->mod->symbols->first; sym; sym = sym->next) {
         if (sym->kind != SYMBOL_STRUCT || !sym->is_export || !sym->node) continue;
@@ -955,7 +1069,8 @@ static void emit_c_file(CodeGen* gen) {
     // standard includes
     fprintf(f, "\n#include <stdint.h>\n");
     fprintf(f, "#include <stdbool.h>\n");
-    fprintf(f, "#include <stddef.h>\n\n");
+    fprintf(f, "#include <stddef.h>\n");
+    fprintf(f, "#include <string.h>\n\n");
 
     // pass 1: non-exported struct typedefs
     for (Symbol* sym = gen->mod->symbols->first; sym; sym = sym->next) {

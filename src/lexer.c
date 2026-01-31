@@ -220,6 +220,8 @@ void lexer_tokenize(Arena* arena, Tokens* tokens, Errors* errors, char* buffer, 
 
         case '(': tokens_push(&lexer, TOKEN_LEFT_PAREN); break;
         case ')': tokens_push(&lexer, TOKEN_RIGHT_PAREN); break;
+        case '[': tokens_push(&lexer, TOKEN_LEFT_BRACKET); break;
+        case ']': tokens_push(&lexer, TOKEN_RIGHT_BRACKET); break;
         case ':': tokens_push(&lexer, TOKEN_COLON); break;
         case ',': tokens_push(&lexer, TOKEN_COMMA); break;
         case '.': tokens_push(&lexer, TOKEN_DOT); break;
@@ -377,6 +379,8 @@ void lexer_print(Tokens* tokens) {
         [TOKEN_SLASH_ASSIGN] = "SLASH_ASSIGN",
         [TOKEN_LEFT_PAREN] = "LEFT_PAREN",
         [TOKEN_RIGHT_PAREN] = "RIGHT_PAREN",
+        [TOKEN_LEFT_BRACKET] = "LEFT_BRACKET",
+        [TOKEN_RIGHT_BRACKET] = "RIGHT_BRACKET",
         [TOKEN_COLON] = "COLON",
         [TOKEN_COMMA] = "COMMA",
         [TOKEN_DOT] = "DOT",

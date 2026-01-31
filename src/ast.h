@@ -46,11 +46,15 @@ typedef enum NodeType {
     NODE_METHOD_CALL,
     NODE_STRUCT_LITERAL,
     NODE_CAST_EXPR,
+    NODE_ARRAY_LITERAL,
+    NODE_INDEX_EXPR,
 
     // types
     NODE_TYPE_SIMPLE,
     NODE_TYPE_REFERENCE,
     NODE_TYPE_POINTER,
+    NODE_TYPE_ARRAY,
+    NODE_TYPE_SLICE,
 } NodeType;
 
 typedef struct Node Node;
@@ -273,10 +277,14 @@ struct Node {
             FieldInitList fields;
         } struct_literal;
         struct { Node* expr; Node* target_type; } cast_expr;
+        struct { NodeList elements; } array_literal;
+        struct { Node* object; Node* index; } index_expr;
 
         struct { char* name; size_t name_size; } type_simple;
         struct { Node* inner; } type_ref;
         struct { Node* inner; } type_ptr;
+        struct { Node* inner; Node* size_expr; } type_array;
+        struct { Node* inner; } type_slice;
     } as;
 };
 

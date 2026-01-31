@@ -1,0 +1,6 @@
+# expect: 5
+func main(): int
+    var arr = [1, 2, 3, 4, 5]
+    var len = arr.len
+    return len as int
+end

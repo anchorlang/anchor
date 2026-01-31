@@ -228,6 +228,31 @@ static Type* resolve_type_node(TypeRegistry* reg, Errors* errors,
         if (!inner) return NULL;
         return type_ptr(reg, inner);
     }
+    case NODE_TYPE_ARRAY: {
+        Type* element = resolve_type_node(reg, errors, table, node->as.type_array.inner);
+        if (!element) return NULL;
+        Node* size_node = node->as.type_array.size_expr;
+        if (!size_node || size_node->type != NODE_INTEGER_LITERAL) {
+            errors_push(errors, SEVERITY_ERROR, node->offset, node->line, node->column,
+                        "array size must be an integer literal");
+            return NULL;
+        }
+        int arr_size = 0;
+        for (size_t i = 0; i < size_node->as.integer_literal.value_size; i++) {
+            arr_size = arr_size * 10 + (size_node->as.integer_literal.value[i] - '0');
+        }
+        if (arr_size <= 0) {
+            errors_push(errors, SEVERITY_ERROR, node->offset, node->line, node->column,
+                        "array size must be positive");
+            return NULL;
+        }
+        return type_array(reg, element, arr_size);
+    }
+    case NODE_TYPE_SLICE: {
+        Type* element = resolve_type_node(reg, errors, table, node->as.type_slice.inner);
+        if (!element) return NULL;
+        return type_slice(reg, element);
+    }
     default:
         return NULL;
     }
@@ -736,6 +761,34 @@ static Type* check_expr(CheckContext* ctx, Node* node) {
             break;
         }
 
+        // array fields: .len and .ptr
+        if (obj_type->kind == TYPE_ARRAY) {
+            if (field_name_size == 3 && memcmp(field_name, "len", 3) == 0) {
+                result = type_usize(ctx->reg);
+            } else if (field_name_size == 3 && memcmp(field_name, "ptr", 3) == 0) {
+                result = type_ptr(ctx->reg, obj_type->as.array_type.element);
+            } else {
+                errors_push(ctx->errors, SEVERITY_ERROR, node->offset, node->line, node->column,
+                            "no field '%.*s' on array type",
+                            (int)field_name_size, field_name);
+            }
+            break;
+        }
+
+        // slice fields: .len and .ptr
+        if (obj_type->kind == TYPE_SLICE) {
+            if (field_name_size == 3 && memcmp(field_name, "len", 3) == 0) {
+                result = type_usize(ctx->reg);
+            } else if (field_name_size == 3 && memcmp(field_name, "ptr", 3) == 0) {
+                result = type_ptr(ctx->reg, obj_type->as.slice_type.element);
+            } else {
+                errors_push(ctx->errors, SEVERITY_ERROR, node->offset, node->line, node->column,
+                            "no field '%.*s' on slice type",
+                            (int)field_name_size, field_name);
+            }
+            break;
+        }
+
         Type* struct_type = unwrap_to_struct(obj_type);
         if (!struct_type) {
             errors_push(ctx->errors, SEVERITY_ERROR, node->offset, node->line, node->column,
@@ -908,6 +961,48 @@ static Type* check_expr(CheckContext* ctx, Node* node) {
         break;
     }
 
+    case NODE_ARRAY_LITERAL: {
+        NodeList* elems = &node->as.array_literal.elements;
+        if (elems->count == 0) {
+            errors_push(ctx->errors, SEVERITY_ERROR, node->offset, node->line, node->column,
+                        "array literal cannot be empty");
+            break;
+        }
+        Type* elem_type = check_expr(ctx, elems->nodes[0]);
+        if (!elem_type) break;
+        for (size_t i = 1; i < elems->count; i++) {
+            Type* t = check_expr(ctx, elems->nodes[i]);
+            if (t && !type_equals(t, elem_type)) {
+                errors_push(ctx->errors, SEVERITY_ERROR, elems->nodes[i]->offset,
+                            elems->nodes[i]->line, elems->nodes[i]->column,
+                            "array element type mismatch: expected '%s', got '%s'",
+                            type_name(elem_type), type_name(t));
+            }
+        }
+        result = type_array(ctx->reg, elem_type, (int)elems->count);
+        break;
+    }
+
+    case NODE_INDEX_EXPR: {
+        Type* obj_type = check_expr(ctx, node->as.index_expr.object);
+        Type* idx_type = check_expr(ctx, node->as.index_expr.index);
+        if (!obj_type) break;
+        if (idx_type && !type_is_integer(idx_type)) {
+            errors_push(ctx->errors, SEVERITY_ERROR, node->as.index_expr.index->offset,
+                        node->as.index_expr.index->line, node->as.index_expr.index->column,
+                        "index must be an integer type, got '%s'", type_name(idx_type));
+        }
+        if (obj_type->kind == TYPE_ARRAY) {
+            result = obj_type->as.array_type.element;
+        } else if (obj_type->kind == TYPE_SLICE) {
+            result = obj_type->as.slice_type.element;
+        } else {
+            errors_push(ctx->errors, SEVERITY_ERROR, node->offset, node->line, node->column,
+                        "cannot index type '%s'", type_name(obj_type));
+        }
+        break;
+    }
+
     default:
         break;
     }
@@ -972,6 +1067,13 @@ static void check_stmt(CheckContext* ctx, Node* node) {
                                 "struct '%s' does not satisfy interface '%s'",
                                 type_name(init_struct), type_name(decl_iface));
                     compatible = true; // already reported
+                }
+            }
+            // allow array-to-slice conversion: T[N] -> T[]
+            if (declared_type->kind == TYPE_SLICE && init_type->kind == TYPE_ARRAY) {
+                if (type_equals(declared_type->as.slice_type.element,
+                                init_type->as.array_type.element)) {
+                    compatible = true;
                 }
             }
             if (!compatible) {

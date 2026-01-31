@@ -73,6 +73,8 @@ typedef enum TokenType {
     // punctuation
     TOKEN_LEFT_PAREN,
     TOKEN_RIGHT_PAREN,
+    TOKEN_LEFT_BRACKET,
+    TOKEN_RIGHT_BRACKET,
     TOKEN_COLON,
     TOKEN_COMMA,
     TOKEN_DOT,

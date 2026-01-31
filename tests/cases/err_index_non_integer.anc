@@ -1,0 +1,5 @@
+# expect_error: index must be an integer type
+func main(): int
+    var arr = [1, 2, 3]
+    return arr[true]
+end

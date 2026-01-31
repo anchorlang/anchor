@@ -94,6 +94,23 @@ Type* type_ptr(TypeRegistry* reg, Type* inner) {
     return t;
 }
 
+Type* type_array(TypeRegistry* reg, Type* element, int size) {
+    Type* t = arena_alloc(reg->arena, sizeof(Type));
+    memset(t, 0, sizeof(Type));
+    t->kind = TYPE_ARRAY;
+    t->as.array_type.element = element;
+    t->as.array_type.size = size;
+    return t;
+}
+
+Type* type_slice(TypeRegistry* reg, Type* element) {
+    Type* t = arena_alloc(reg->arena, sizeof(Type));
+    memset(t, 0, sizeof(Type));
+    t->kind = TYPE_SLICE;
+    t->as.slice_type.element = element;
+    return t;
+}
+
 static int type_name_write(Type* type, char* buf, int size) {
     if (!type) return snprintf(buf, size, "?");
 
@@ -139,6 +156,16 @@ static int type_name_write(Type* type, char* buf, int size) {
         pos += type_name_write(type->as.ptr_type.inner, buf + pos, size - pos);
         return pos;
     }
+    case TYPE_ARRAY: {
+        int pos = type_name_write(type->as.array_type.element, buf, size);
+        pos += snprintf(buf + pos, size - pos, "[%d]", type->as.array_type.size);
+        return pos;
+    }
+    case TYPE_SLICE: {
+        int pos = type_name_write(type->as.slice_type.element, buf, size);
+        pos += snprintf(buf + pos, size - pos, "[]");
+        return pos;
+    }
     }
     return snprintf(buf, size, "?");
 }
@@ -171,6 +198,11 @@ bool type_equals(Type* a, Type* b) {
         }
         return true;
     }
+    case TYPE_ARRAY:
+        return type_equals(a->as.array_type.element, b->as.array_type.element)
+            && a->as.array_type.size == b->as.array_type.size;
+    case TYPE_SLICE:
+        return type_equals(a->as.slice_type.element, b->as.slice_type.element);
     default:
         // primitives, structs, interfaces: pointer equality already checked above
         return false;

@@ -1,0 +1,5 @@
+# expect: 2
+func main(): int
+    var arr = [5, 4, 3, 2, 1]
+    return arr[3]
+end

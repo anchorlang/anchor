@@ -241,6 +241,25 @@ static Node* parse_type(Parser* p) {
         Node* node = make_node(p, NODE_TYPE_SIMPLE, tok);
         node->as.type_simple.name = tok->value;
         node->as.type_simple.name_size = tok->size;
+
+        // check for array/slice suffix: T[N] or T[]
+        if (check(p, TOKEN_LEFT_BRACKET)) {
+            Token* bracket_tok = advance(p);
+            if (check(p, TOKEN_RIGHT_BRACKET)) {
+                advance(p); // T[] -> slice
+                Node* slice_node = make_node(p, NODE_TYPE_SLICE, bracket_tok);
+                slice_node->as.type_slice.inner = node;
+                return slice_node;
+            } else {
+                Node* size_expr = parse_expression(p); // T[N] -> array
+                expect(p, TOKEN_RIGHT_BRACKET, "Expected ']' after array size.");
+                Node* array_node = make_node(p, NODE_TYPE_ARRAY, bracket_tok);
+                array_node->as.type_array.inner = node;
+                array_node->as.type_array.size_expr = size_expr;
+                return array_node;
+            }
+        }
+
         return node;
     }
     Token* tok = peek(p);
@@ -404,6 +423,21 @@ static Node* parse_primary(Parser* p) {
         node->as.paren_expr.inner = inner;
         return node;
     }
+    case TOKEN_LEFT_BRACKET: {
+        Token* bracket_tok = advance(p);
+        Node* node = make_node(p, NODE_ARRAY_LITERAL, bracket_tok);
+        memset(&node->as.array_literal.elements, 0, sizeof(NodeList));
+        if (!check(p, TOKEN_RIGHT_BRACKET)) {
+            Node* elem = parse_expression(p);
+            if (elem) node_list_push(p->arena, &node->as.array_literal.elements, elem);
+            while (match(p, TOKEN_COMMA)) {
+                elem = parse_expression(p);
+                if (elem) node_list_push(p->arena, &node->as.array_literal.elements, elem);
+            }
+        }
+        expect(p, TOKEN_RIGHT_BRACKET, "Expected ']' after array literal.");
+        return node;
+    }
     default:
         errors_push(p->errors, SEVERITY_ERROR, tok->offset, tok->line, tok->column,
                      "Unexpected token in expression.");
@@ -418,7 +452,18 @@ static Node* parse_postfix(Parser* p) {
     Node* node = parse_primary(p);
     if (!node) return NULL;
 
-    while (check(p, TOKEN_DOT)) {
+    while (check(p, TOKEN_DOT) || check(p, TOKEN_LEFT_BRACKET)) {
+        if (check(p, TOKEN_LEFT_BRACKET)) {
+            Token* bracket_tok = advance(p);
+            Node* index = parse_expression(p);
+            expect(p, TOKEN_RIGHT_BRACKET, "Expected ']' after index.");
+            Node* idx_node = make_node(p, NODE_INDEX_EXPR, bracket_tok);
+            idx_node->as.index_expr.object = node;
+            idx_node->as.index_expr.index = index;
+            node = idx_node;
+            continue;
+        }
+
         Token* dot_tok = advance(p);
         Token* name_tok = expect(p, TOKEN_IDENTIFIER, "Expected field name after '.'.");
         if (!name_tok) return node;
@@ -1220,6 +1265,19 @@ static void ast_print_type(Node* node, int indent) {
         printf("TypePtr\n");
         ast_print_type(node->as.type_ptr.inner, indent + 1);
         break;
+    case NODE_TYPE_ARRAY:
+        print_indent(indent);
+        printf("TypeArray\n");
+        ast_print_type(node->as.type_array.inner, indent + 1);
+        print_indent(indent + 1);
+        printf("size:\n");
+        ast_print(node->as.type_array.size_expr, indent + 2);
+        break;
+    case NODE_TYPE_SLICE:
+        print_indent(indent);
+        printf("TypeSlice\n");
+        ast_print_type(node->as.type_slice.inner, indent + 1);
+        break;
     default:
         break;
     }
@@ -1600,9 +1658,28 @@ void ast_print(Node* node, int indent) {
         ast_print(node->as.cast_expr.target_type, indent + 2);
         break;
 
+    case NODE_ARRAY_LITERAL:
+        printf("ArrayLiteral [%zu:%zu]\n", node->line, node->column);
+        for (size_t i = 0; i < node->as.array_literal.elements.count; i++) {
+            ast_print(node->as.array_literal.elements.nodes[i], indent + 1);
+        }
+        break;
+
+    case NODE_INDEX_EXPR:
+        printf("IndexExpr [%zu:%zu]\n", node->line, node->column);
+        print_indent(indent + 1);
+        printf("object:\n");
+        ast_print(node->as.index_expr.object, indent + 2);
+        print_indent(indent + 1);
+        printf("index:\n");
+        ast_print(node->as.index_expr.index, indent + 2);
+        break;
+
     case NODE_TYPE_SIMPLE:
     case NODE_TYPE_REFERENCE:
     case NODE_TYPE_POINTER:
+    case NODE_TYPE_ARRAY:
+    case NODE_TYPE_SLICE:
         ast_print_type(node, indent);
         break;
     }

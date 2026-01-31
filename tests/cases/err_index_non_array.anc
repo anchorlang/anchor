@@ -1,0 +1,5 @@
+# expect_error: cannot index type
+func main(): int
+    var a = 5
+    return a[0]
+end
