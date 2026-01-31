@@ -888,6 +888,26 @@ static Type* check_expr(CheckContext* ctx, Node* node) {
         break;
     }
 
+    case NODE_CAST_EXPR: {
+        Type* from = check_expr(ctx, node->as.cast_expr.expr);
+        Type* to = resolve_type_node(ctx->reg, ctx->errors,
+                                      ctx->mod->symbols,
+                                      node->as.cast_expr.target_type);
+        node->as.cast_expr.target_type->resolved_type = to;
+        if (from && to) {
+            bool allowed = false;
+            if (type_is_numeric(from) && type_is_numeric(to)) allowed = true;
+            if (from->kind == TYPE_REF && to->kind == TYPE_REF) allowed = true;
+            if (from->kind == TYPE_PTR && to->kind == TYPE_PTR) allowed = true;
+            if (!allowed) {
+                errors_push(ctx->errors, SEVERITY_ERROR, node->offset, node->line, node->column,
+                            "cannot cast '%s' to '%s'", type_name(from), type_name(to));
+            }
+        }
+        result = to;
+        break;
+    }
+
     default:
         break;
     }
@@ -937,6 +957,21 @@ static void check_stmt(CheckContext* ctx, Node* node) {
                 // widening conversions (smaller -> larger rank) always allowed
                 else if (type_integer_convertible(init_type, declared_type)) {
                     compatible = true;
+                }
+            }
+            // allow &Struct where &Interface is expected (with satisfaction check)
+            Type* decl_iface = unwrap_to_interface(declared_type);
+            Type* init_struct = unwrap_to_struct(init_type);
+            if (decl_iface && init_struct) {
+                if (check_interface_satisfaction(ctx, init_struct, decl_iface)) {
+                    compatible = true;
+                    impl_pair_add(ctx->mod, init_struct, decl_iface,
+                                  init_struct->as.struct_type.module);
+                } else {
+                    errors_push(ctx->errors, SEVERITY_ERROR, node->offset, node->line, node->column,
+                                "struct '%s' does not satisfy interface '%s'",
+                                type_name(init_struct), type_name(decl_iface));
+                    compatible = true; // already reported
                 }
             }
             if (!compatible) {

@@ -1,0 +1,5 @@
+# expect_error: cannot cast
+func main(): int
+    var s = "hello"
+    return s as int
+end

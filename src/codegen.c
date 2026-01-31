@@ -368,6 +368,30 @@ static void emit_expr(CodeGen* gen, FILE* f, Node* node) {
         break;
     }
 
+    case NODE_CAST_EXPR: {
+        Type* target = node->as.cast_expr.target_type->resolved_type;
+        Type* source = get_type(node->as.cast_expr.expr);
+        // &Interface -> &Struct: extract .data pointer and cast
+        bool iface_to_struct = false;
+        if (source && target &&
+            source->kind == TYPE_REF && target->kind == TYPE_REF &&
+            source->as.ref_type.inner && target->as.ref_type.inner &&
+            source->as.ref_type.inner->kind == TYPE_INTERFACE &&
+            target->as.ref_type.inner->kind == TYPE_STRUCT) {
+            iface_to_struct = true;
+        }
+        fprintf(f, "(");
+        emit_type(gen, f, target);
+        fprintf(f, ")");
+        if (iface_to_struct) {
+            emit_expr(gen, f, node->as.cast_expr.expr);
+            fprintf(f, ".data");
+        } else {
+            emit_expr(gen, f, node->as.cast_expr.expr);
+        }
+        break;
+    }
+
     default:
         fprintf(f, "/* unsupported expr %d */", node->type);
         break;
@@ -390,7 +414,37 @@ static void emit_stmt(CodeGen* gen, FILE* f, Node* node) {
         fprintf(f, " %.*s", (int)node->as.var_decl.name_size, node->as.var_decl.name);
         if (node->as.var_decl.value) {
             fprintf(f, " = ");
-            emit_expr(gen, f, node->as.var_decl.value);
+            // detect &Struct assigned to &Interface variable — emit fat pointer wrapper
+            Type* init_type = get_type(node->as.var_decl.value);
+            Type* decl_iface = NULL;
+            Type* init_struct = NULL;
+            if (var_type && init_type) {
+                if (var_type->kind == TYPE_REF && var_type->as.ref_type.inner &&
+                    var_type->as.ref_type.inner->kind == TYPE_INTERFACE) {
+                    decl_iface = var_type->as.ref_type.inner;
+                }
+                if (init_type->kind == TYPE_REF && init_type->as.ref_type.inner &&
+                    init_type->as.ref_type.inner->kind == TYPE_STRUCT) {
+                    init_struct = init_type->as.ref_type.inner;
+                }
+            }
+            if (decl_iface && init_struct) {
+                fprintf(f, "(");
+                emit_iface_mangled(gen, f, decl_iface);
+                fprintf(f, "__ref){ .data = ");
+                emit_expr(gen, f, node->as.var_decl.value);
+                fprintf(f, ", .vtable = &");
+                Module* saved = gen->mod;
+                gen->mod = init_struct->as.struct_type.module;
+                emit_mangled(gen, f, init_struct->as.struct_type.name,
+                             init_struct->as.struct_type.name_size);
+                gen->mod = saved;
+                fprintf(f, "__%.*s__vtable }",
+                        (int)decl_iface->as.interface_type.name_size,
+                        decl_iface->as.interface_type.name);
+            } else {
+                emit_expr(gen, f, node->as.var_decl.value);
+            }
         }
         fprintf(f, ";\n");
         break;

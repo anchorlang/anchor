@@ -1,0 +1,20 @@
+# expect: 9
+struct Pair
+    a: int
+    b: int
+
+    func hash(): int
+        return self.a ^ self.b
+    end
+end
+
+interface Hashable
+    func hash(): int
+end
+
+func main(): int
+    var p = Pair(a = 3, b = 9)
+    var h: &Hashable = &p
+    var p2 = h as &Pair
+    return p2.b
+end

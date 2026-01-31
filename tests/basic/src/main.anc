@@ -262,6 +262,18 @@ func test_continue(): int
     end
 end
 
+func test_primitive_casting(): int
+    var val: usize = 10
+    return val as int
+end
+
+func test_struct_casting(): int
+    var pair = TestPair(a = 3, b = 9)
+    var hashable: &Hashable = &pair
+    var pair2 = hashable as &TestPair
+    return pair2.b
+end
+
 func main(): int
     return 5
 end

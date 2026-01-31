@@ -45,6 +45,7 @@ typedef enum NodeType {
     NODE_FIELD_ACCESS,
     NODE_METHOD_CALL,
     NODE_STRUCT_LITERAL,
+    NODE_CAST_EXPR,
 
     // types
     NODE_TYPE_SIMPLE,
@@ -271,6 +272,7 @@ struct Node {
             size_t struct_name_size;
             FieldInitList fields;
         } struct_literal;
+        struct { Node* expr; Node* target_type; } cast_expr;
 
         struct { char* name; size_t name_size; } type_simple;
         struct { Node* inner; } type_ref;

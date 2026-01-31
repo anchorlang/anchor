@@ -84,6 +84,7 @@ static void lexer_read_identifier_or_keyword(Lexer* lexer) {
         if (strncmp(start, "if", 2) == 0)           type = TOKEN_IF;
         else if (strncmp(start, "in", 2) == 0)      type = TOKEN_IN;
         else if (strncmp(start, "or", 2) == 0)      type = TOKEN_OR;
+        else if (strncmp(start, "as", 2) == 0)      type = TOKEN_AS;
         break;
     case 3:
         if (strncmp(start, "end", 3) == 0)          type = TOKEN_END;
@@ -356,6 +357,7 @@ void lexer_print(Tokens* tokens) {
         [TOKEN_AND] = "AND",
         [TOKEN_OR] = "OR",
         [TOKEN_NOT] = "NOT",
+        [TOKEN_AS] = "AS",
         [TOKEN_PLUS] = "PLUS",
         [TOKEN_MINUS] = "MINUS",
         [TOKEN_STAR] = "STAR",

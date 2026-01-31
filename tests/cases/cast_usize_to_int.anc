@@ -1,0 +1,5 @@
+# expect: 10
+func main(): int
+    var val: usize = 10
+    return val as int
+end

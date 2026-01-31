@@ -475,12 +475,26 @@ static Node* parse_unary(Parser* p) {
     return parse_postfix(p);
 }
 
+// Level 4.5: cast (as)
+static Node* parse_cast(Parser* p) {
+    Node* node = parse_unary(p);
+    while (check(p, TOKEN_AS)) {
+        Token* tok = advance(p);
+        Node* type_node = parse_type(p);
+        Node* cast = make_node(p, NODE_CAST_EXPR, tok);
+        cast->as.cast_expr.expr = node;
+        cast->as.cast_expr.target_type = type_node;
+        node = cast;
+    }
+    return node;
+}
+
 // Level 4: bitwise (^)
 static Node* parse_bitwise(Parser* p) {
-    Node* left = parse_unary(p);
+    Node* left = parse_cast(p);
     while (check(p, TOKEN_CARET)) {
         Token* op_tok = advance(p);
-        Node* right = parse_unary(p);
+        Node* right = parse_cast(p);
         Node* node = make_node(p, NODE_BINARY_EXPR, op_tok);
         node->as.binary_expr.op = op_tok->type;
         node->as.binary_expr.left = left;
@@ -1574,6 +1588,16 @@ void ast_print(Node* node, int indent) {
             printf("%.*s:\n", (int)fi->name_size, fi->name);
             ast_print(fi->value, indent + 2);
         }
+        break;
+
+    case NODE_CAST_EXPR:
+        printf("CastExpr [%zu:%zu]\n", node->line, node->column);
+        print_indent(indent + 1);
+        printf("expr:\n");
+        ast_print(node->as.cast_expr.expr, indent + 2);
+        print_indent(indent + 1);
+        printf("target:\n");
+        ast_print(node->as.cast_expr.target_type, indent + 2);
         break;
 
     case NODE_TYPE_SIMPLE:

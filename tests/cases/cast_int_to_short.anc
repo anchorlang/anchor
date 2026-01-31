@@ -1,0 +1,6 @@
+# expect: 42
+func main(): int
+    var val = 42
+    var s = val as short
+    return s as int
+end
