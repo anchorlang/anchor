@@ -2,10 +2,26 @@ extern func malloc(size: usize): *void
 extern func free(ptr: *void)
 
 interface Allocator
-    func create[T](): *T
-    func destroy[T](ptr: *T)
+    func alloc(size: usize): *void
+    func free(ptr: *void)
+end
+
+struct HeapAllocator
+    func alloc(size: usize): *void
+        return malloc(size)
+    end
+    func free(ptr: *void)
+        free(ptr)
+    end
+end
+
+func create[T](allocator: &Allocator): *T
+    return allocator.alloc(sizeof(T)) as *T
 end
 
 func main(): int
+    var allocator = HeapAllocator()
+    var data = create[int](&allocator)
+
     return 0
 end

@@ -1523,13 +1523,11 @@ static Type* check_expr(CheckContext* ctx, Node* node) {
                     callee->as.identifier.name_size = inst->mangled_name_size;
                 }
                 callee->resolved_type = callee_type;
-
-                result = callee_type->as.func_type.return_type;
-                break;
+                // fall through to arg type-checking (for interface satisfaction, etc.)
+            } else {
+                callee_type = get_symbol_type(sym);
+                callee->resolved_type = callee_type;
             }
-
-            callee_type = get_symbol_type(sym);
-            callee->resolved_type = callee_type;
         } else {
             callee_type = check_expr(ctx, callee);
         }

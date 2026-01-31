@@ -435,7 +435,11 @@ static void emit_expr(CodeGen* gen, FILE* f, Node* node) {
 
         FieldInitList* inits = &node->as.struct_literal.fields;
         if (inits->count == 0) {
-            fprintf(f, "0");
+            // Only emit 0 if struct has fields (zero-init); skip for empty structs
+            Type* st = get_type(node);
+            if (st && st->kind == TYPE_STRUCT && st->as.struct_type.fields->count > 0) {
+                fprintf(f, "0");
+            }
         }
         for (size_t i = 0; i < inits->count; i++) {
             if (i > 0) fprintf(f, ", ");
