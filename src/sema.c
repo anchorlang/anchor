@@ -1968,20 +1968,20 @@ static void check_stmt(CheckContext* ctx, Node* node) {
 
     case NODE_IF_STMT: {
         Type* cond = check_expr(ctx, node->as.if_stmt.condition);
-        if (cond && cond->kind != TYPE_BOOL) {
+        if (cond && cond->kind != TYPE_BOOL && cond->kind != TYPE_PTR) {
             errors_push(ctx->errors, SEVERITY_ERROR, node->offset, node->line, node->column,
-                        "if condition must be bool, got '%s'", type_name(cond));
+                        "if condition must be bool or pointer, got '%s'", type_name(cond));
         }
         check_body(ctx, &node->as.if_stmt.then_body);
 
         ElseIfList* elseifs = &node->as.if_stmt.elseifs;
         for (size_t i = 0; i < elseifs->count; i++) {
             Type* ei_cond = check_expr(ctx, elseifs->branches[i].condition);
-            if (ei_cond && ei_cond->kind != TYPE_BOOL) {
+            if (ei_cond && ei_cond->kind != TYPE_BOOL && ei_cond->kind != TYPE_PTR) {
                 errors_push(ctx->errors, SEVERITY_ERROR,
                             elseifs->branches[i].offset, elseifs->branches[i].line,
                             elseifs->branches[i].column,
-                            "elseif condition must be bool, got '%s'", type_name(ei_cond));
+                            "elseif condition must be bool or pointer, got '%s'", type_name(ei_cond));
             }
             check_body(ctx, &elseifs->branches[i].body);
         }
@@ -2034,9 +2034,9 @@ static void check_stmt(CheckContext* ctx, Node* node) {
 
     case NODE_WHILE_STMT: {
         Type* cond = check_expr(ctx, node->as.while_stmt.condition);
-        if (cond && cond->kind != TYPE_BOOL) {
+        if (cond && cond->kind != TYPE_BOOL && cond->kind != TYPE_PTR) {
             errors_push(ctx->errors, SEVERITY_ERROR, node->offset, node->line, node->column,
-                        "while condition must be bool, got '%s'", type_name(cond));
+                        "while condition must be bool or pointer, got '%s'", type_name(cond));
         }
         ctx->loop_depth++;
         ctx->real_loop_depth++;

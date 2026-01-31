@@ -1,0 +1,9 @@
+# expect: 1
+func main(): int
+    var val = 42
+    var ptr: *int = &val
+    if ptr
+        return 1
+    end
+    return 0
+end

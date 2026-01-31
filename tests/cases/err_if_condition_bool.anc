@@ -1,4 +1,4 @@
-# expect_error: if condition must be bool
+# expect_error: if condition must be bool or pointer
 func main(): int
     if 5
         return 1

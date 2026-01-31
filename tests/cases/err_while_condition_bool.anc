@@ -1,4 +1,4 @@
-# expect_error: while condition must be bool
+# expect_error: while condition must be bool or pointer
 func main(): int
     while 1
         return 1
