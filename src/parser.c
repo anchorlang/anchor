@@ -396,11 +396,6 @@ static Node* parse_struct_literal(Parser* p, Token* name_tok) {
     return node;
 }
 
-static Node* parse_argument_list(Parser* p, NodeList* args) {
-    (void)args;
-    return NULL; // unused, args passed by pointer below
-}
-
 static void parse_args_into(Parser* p, NodeList* args) {
     if (!check(p, TOKEN_RIGHT_PAREN)) {
         Node* arg = parse_expression(p);
@@ -591,13 +586,7 @@ static Node* parse_postfix(Parser* p) {
         // parse optional type args: obj.method[int, float](args)
         NodeList method_type_args = {0};
         if (check(p, TOKEN_LEFT_BRACKET)) {
-            advance(p); // consume '['
-            while (!check(p, TOKEN_RIGHT_BRACKET) && !check(p, TOKEN_END_OF_FILE)) {
-                Node* type_node = parse_type(p);
-                node_list_push(p->arena, &method_type_args, type_node);
-                if (!match(p, TOKEN_COMMA)) break;
-            }
-            expect(p, TOKEN_RIGHT_BRACKET, "Expected ']' after type arguments.");
+            method_type_args = parse_type_args(p);
         }
 
         if (check(p, TOKEN_LEFT_PAREN) || method_type_args.count > 0) {
@@ -947,7 +936,7 @@ static Node* parse_assignment_or_expr_stmt(Parser* p) {
         return node;
     }
 
-    Node* node = make_node(p, NODE_EXPR_STMT, &p->tokens->tokens[expr->line > 0 ? 0 : 0]);
+    Node* node = make_node(p, NODE_EXPR_STMT, NULL);
     node->offset = expr->offset;
     node->line = expr->line;
     node->column = expr->column;
@@ -1075,40 +1064,6 @@ static ParamList parse_param_list(Parser* p) {
     return params;
 }
 
-static Node* parse_func_decl(Parser* p, bool is_export) {
-    Token* tok = advance(p); // consume FUNC
-    Token* name_tok = expect(p, TOKEN_IDENTIFIER, "Expected function name.");
-    if (!name_tok) return NULL;
-
-    TypeParamList type_params = {0};
-    if (check(p, TOKEN_LEFT_BRACKET)) {
-        type_params = parse_type_params(p);
-    }
-
-    expect(p, TOKEN_LEFT_PAREN, "Expected '(' after function name.");
-    ParamList params = parse_param_list(p);
-    expect(p, TOKEN_RIGHT_PAREN, "Expected ')' after parameters.");
-
-    Node* return_type = NULL;
-    if (match(p, TOKEN_COLON)) {
-        return_type = parse_type(p);
-    }
-
-    expect_newline(p);
-    NodeList body = parse_body(p);
-    expect(p, TOKEN_END, "Expected 'end' to close function.");
-
-    Node* node = make_node(p, NODE_FUNC_DECL, tok);
-    node->as.func_decl.is_export = is_export;
-    node->as.func_decl.name = name_tok->value;
-    node->as.func_decl.name_size = name_tok->size;
-    node->as.func_decl.type_params = type_params;
-    node->as.func_decl.params = params;
-    node->as.func_decl.return_type = return_type;
-    node->as.func_decl.body = body;
-    return node;
-}
-
 static Node* parse_func_signature(Parser* p) {
     Token* tok = advance(p); // consume FUNC
     Token* name_tok = expect(p, TOKEN_IDENTIFIER, "Expected function name.");
@@ -1136,6 +1091,17 @@ static Node* parse_func_signature(Parser* p) {
     node->as.func_decl.params = params;
     node->as.func_decl.return_type = return_type;
     memset(&node->as.func_decl.body, 0, sizeof(NodeList));
+    return node;
+}
+
+static Node* parse_func_decl(Parser* p, bool is_export) {
+    Node* node = parse_func_signature(p);
+    if (!node) return NULL;
+    node->as.func_decl.is_export = is_export;
+
+    expect_newline(p);
+    node->as.func_decl.body = parse_body(p);
+    expect(p, TOKEN_END, "Expected 'end' to close function.");
     return node;
 }
 
