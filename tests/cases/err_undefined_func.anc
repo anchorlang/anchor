@@ -1,0 +1,4 @@
+# expect_error: undefined function
+func main(): int
+    return foo()
+end

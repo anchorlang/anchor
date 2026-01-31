@@ -1,0 +1,8 @@
+# expect_error: expected 'int', got 'bool'
+func double(x: int): int
+    return x * 2
+end
+
+func main(): int
+    return double(true)
+end

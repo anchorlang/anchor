@@ -1,0 +1,12 @@
+# expect: 15
+func double(x: int): int
+    return x * 2
+end
+
+func add_one(x: int): int
+    return x + 1
+end
+
+func main(): int
+    return add_one(double(7))
+end

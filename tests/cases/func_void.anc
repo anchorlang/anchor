@@ -1,0 +1,11 @@
+# expect: 42
+var result = 0
+
+func set_result()
+    result = 42
+end
+
+func main(): int
+    set_result()
+    return result
+end

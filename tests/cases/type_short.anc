@@ -1,0 +1,9 @@
+# expect: 4
+func get_short(): ushort
+    return 4
+end
+
+func main(): int
+    var s: ushort = get_short()
+    return s
+end

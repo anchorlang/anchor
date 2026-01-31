@@ -1,0 +1,4 @@
+# expect_error: undefined variable
+func main(): int
+    return x
+end

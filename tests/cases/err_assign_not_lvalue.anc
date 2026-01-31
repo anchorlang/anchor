@@ -1,0 +1,9 @@
+# expect_error: cannot assign to this expression
+func foo(): int
+    return 5
+end
+
+func main(): int
+    foo() = 10
+    return 0
+end

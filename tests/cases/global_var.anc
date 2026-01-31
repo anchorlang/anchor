@@ -1,0 +1,7 @@
+# expect: 10
+var counter = 5
+
+func main(): int
+    counter += 5
+    return counter
+end

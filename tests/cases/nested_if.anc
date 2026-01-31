@@ -1,0 +1,18 @@
+# expect: 3
+func classify(x: int): int
+    if x > 0
+        if x > 10
+            return 1
+        else
+            return 3
+        end
+    elseif x < 0
+        return 2
+    else
+        return 0
+    end
+end
+
+func main(): int
+    return classify(5)
+end

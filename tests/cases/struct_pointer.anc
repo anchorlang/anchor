@@ -1,0 +1,11 @@
+# expect: 9
+struct Box
+    value: int
+end
+
+func main(): int
+    var b = Box(value = 9)
+    var ptr: *Box = null
+    ptr = &b
+    return ptr.value
+end

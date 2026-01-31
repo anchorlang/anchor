@@ -1,0 +1,6 @@
+# expect_error: assignment type mismatch
+func main(): int
+    var a = 5
+    a = true
+    return a
+end

@@ -1,0 +1,11 @@
+# expect: 6
+func main(): int
+    var a = 0
+    while a < 100
+        if a > 5
+            break
+        end
+        a += 1
+    end
+    return a
+end

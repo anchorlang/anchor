@@ -1,0 +1,5 @@
+# expect_error: undefined struct
+func main(): int
+    var p = Foo(x = 1)
+    return 0
+end

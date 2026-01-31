@@ -1,0 +1,5 @@
+# expect_error: unknown type
+func main(): int
+    var x: Foo = 5
+    return 0
+end

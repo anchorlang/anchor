@@ -1,0 +1,12 @@
+# expect: 99
+func main(): int
+    var x = 42
+    match x
+    case 0
+        return 0
+    case 1
+        return 1
+    else
+        return 99
+    end
+end

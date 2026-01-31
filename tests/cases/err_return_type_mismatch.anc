@@ -1,0 +1,4 @@
+# expect_error: return type mismatch
+func main(): int
+    return true
+end

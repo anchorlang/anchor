@@ -1,0 +1,7 @@
+# expect: 15
+func main(): int
+    var a = 3
+    var b = 9
+    var c = a + b - (a * (10 - b)) / b + 3
+    return c
+end

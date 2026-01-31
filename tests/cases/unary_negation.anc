@@ -1,0 +1,7 @@
+# expect: 5
+func main(): int
+    var a = -8
+    var b = -a
+    var c = b + a
+    return c + 5
+end

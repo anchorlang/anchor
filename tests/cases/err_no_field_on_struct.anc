@@ -1,0 +1,10 @@
+# expect_error: no field
+struct Point
+    x: int
+    y: int
+end
+
+func main(): int
+    var p = Point(x = 1, y = 2)
+    return p.z
+end

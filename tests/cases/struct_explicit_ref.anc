@@ -1,0 +1,10 @@
+# expect: 5
+struct Data
+    val: int
+end
+
+func main(): int
+    var d = Data(val = 5)
+    var r: &Data = &d
+    return r.val
+end

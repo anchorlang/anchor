@@ -1,0 +1,9 @@
+# expect: 12
+func main(): int
+    var a = 10
+    a += 5
+    a -= 3
+    a *= 2
+    a /= 2
+    return a
+end

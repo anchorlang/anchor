@@ -1,0 +1,11 @@
+# expect: 1
+func check(a: int, b: int): bool
+    return (a < 6 and b > 9) or (a > 10 and b > 12) or a == 2
+end
+
+func main(): int
+    if check(2, 0)
+        return 1
+    end
+    return 0
+end

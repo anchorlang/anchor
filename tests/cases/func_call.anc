@@ -1,0 +1,10 @@
+# expect: 8
+func add(a: int, b: int): int
+    return a + b
+end
+
+func main(): int
+    var a = 3
+    var b = 5
+    return add(a, b)
+end

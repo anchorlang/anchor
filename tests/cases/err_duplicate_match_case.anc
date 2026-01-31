@@ -1,0 +1,12 @@
+# expect_error: duplicate match case value
+func main(): int
+    var x = 5
+    match x
+    case 1
+        return 1
+    case 1
+        return 2
+    else
+        return 0
+    end
+end

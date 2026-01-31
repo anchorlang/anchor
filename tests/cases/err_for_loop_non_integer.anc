@@ -1,0 +1,7 @@
+# expect_error: for-loop start must be an integer type
+func main(): int
+    for i in true until 10
+        return 1
+    end
+    return 0
+end

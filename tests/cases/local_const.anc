@@ -1,0 +1,5 @@
+# expect: 7
+func main(): int
+    const x = 7
+    return x
+end

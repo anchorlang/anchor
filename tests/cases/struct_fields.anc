@@ -1,0 +1,10 @@
+# expect: 3
+struct Point
+    x: int
+    y: int
+end
+
+func main(): int
+    var p = Point(x = 3, y = 7)
+    return p.x
+end

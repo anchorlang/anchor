@@ -1,0 +1,12 @@
+# expect: 1
+func main(): int
+    var a = true
+    if not a
+        return 0
+    end
+    var b = false
+    if not b
+        return 1
+    end
+    return 2
+end

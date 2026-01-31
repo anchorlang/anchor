@@ -1,0 +1,6 @@
+# expect: 42
+const ANSWER = 42
+
+func main(): int
+    return ANSWER
+end

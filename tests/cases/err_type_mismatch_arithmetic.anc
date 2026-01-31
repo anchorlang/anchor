@@ -1,0 +1,7 @@
+# expect_error: right operand of arithmetic must be numeric
+func main(): int
+    var a = 5
+    var b = true
+    var c = a + b
+    return 0
+end

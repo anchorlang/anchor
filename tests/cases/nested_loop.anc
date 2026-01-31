@@ -1,0 +1,10 @@
+# expect: 100
+func main(): int
+    var sum = 0
+    for i in 0 until 10
+        for j in 0 until 10
+            sum += 1
+        end
+    end
+    return sum
+end

@@ -1,0 +1,7 @@
+# expect_error: while condition must be bool
+func main(): int
+    while 1
+        return 1
+    end
+    return 0
+end
