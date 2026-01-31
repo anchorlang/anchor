@@ -22,7 +22,6 @@ int main(int argc, char** argv) {
             "Commands:\n"
             "  ancc build [dir]     Build package.\n"
             "  ancc run <file>      Compile and run a file.\n"
-            "  ancc compile [file]  Compile one file.\n"
             "  ancc lsp [dir]       Run LSP mode.\n"
             "  ancc lexer [file]    Print tokens.\n"
             "  ancc ast [file]      Print ast.\n"
