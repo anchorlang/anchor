@@ -1908,6 +1908,11 @@ static Type* check_expr(CheckContext* ctx, Node* node) {
                                 (val_type->kind == TYPE_PTR || val_type->kind == TYPE_REF)) {
                                 compatible = true;
                             }
+                            // allow integer literal coercion to any integer type
+                            if (type_is_integer(field_type) && type_is_integer(val_type) &&
+                                fi->value->type == NODE_INTEGER_LITERAL) {
+                                compatible = true;
+                            }
                             if (!compatible) {
                                 errors_push(ctx->errors, SEVERITY_ERROR, fi->offset, fi->line, fi->column,
                                             "field '%.*s': expected '%s', got '%s'",

@@ -1,27 +1,18 @@
 extern func malloc(size: usize): *void
 extern func free(ptr: *void)
 
-interface Allocator
-    func alloc(size: usize): *void
-    func free(ptr: *void)
+struct ArenaAllocator
+    data: *byte
+    size: usize
+    offset: usize
 end
 
-struct HeapAllocator
-    func alloc(size: usize): *void
-        return malloc(size)
-    end
-    func free(ptr: *void)
-        free(ptr)
-    end
-end
-
-func create[T](allocator: &Allocator): *T
-    return allocator.alloc(sizeof(T)) as *T
+func create_arena(size: usize): ArenaAllocator
+    var data = malloc(size) as *byte
+    return ArenaAllocator(data = data, size = 0, offset = 0)
 end
 
 func main(): int
-    var allocator = HeapAllocator()
-    var data = create[int](&allocator)
-
+    var arena = create_arena(1024)
     return 0
 end
