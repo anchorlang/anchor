@@ -142,26 +142,6 @@ int main(int argc, char** argv) {
             compile(&arena, &errors, &pkg, &graph, output_dir);
         }
 
-        printf("package: %s\n", pkg.name);
-        printf("modules: %d\n", graph.count);
-        for (Module* m = graph.first; m; m = m->next) {
-            printf("  %s (%s)\n", m->name, m->path);
-            if (m->symbols) {
-                static const char* kind_names[] = {
-                    "FUNC", "STRUCT", "INTERFACE", "CONST", "VAR", "IMPORT"
-                };
-                for (Symbol* s = m->symbols->first; s; s = s->next) {
-                    printf("    %s %.*s", kind_names[s->kind], (int)s->name_size, s->name);
-                    if (s->node && s->node->resolved_type && s->kind == SYMBOL_FUNC) {
-                        printf(" %s", type_name((Type*)s->node->resolved_type));
-                    }
-                    if (s->is_export) printf(" [export]");
-                    if (s->source) printf(" <- %s", s->source->name);
-                    printf("\n");
-                }
-            }
-        }
-
         for (Error* error = errors.first; error; error = error->next) {
             fprintf(stderr, "%zu:%zu: %s\n", error->line, error->column, error->message);
         }
