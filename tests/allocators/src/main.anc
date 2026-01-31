@@ -1,0 +1,11 @@
+extern func malloc(size: usize): *void
+extern func free(ptr: *void)
+
+interface Allocator
+    func create[T](): *T
+    func destroy[T](ptr: *T)
+end
+
+func main(): int
+    return 0
+end

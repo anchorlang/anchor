@@ -1,0 +1,26 @@
+# expect: 99
+extern func malloc(size: usize): *void
+extern func free(ptr: *void)
+
+struct Allocator
+
+    func create[T](): *T
+        return malloc(sizeof(T)) as *T
+    end
+
+    func destroy[T](ptr: *T)
+        free(ptr as *void)
+    end
+end
+
+func main(): int
+    var alloc = Allocator()
+    var p1 = alloc.create[int]()
+    var p2 = alloc.create[int]()
+    *p1 = 99
+    *p2 = 50
+    var result = *p1
+    alloc.destroy[int](p1)
+    alloc.destroy[int](p2)
+    return result
+end

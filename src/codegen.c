@@ -365,7 +365,21 @@ static void emit_expr(CodeGen* gen, FILE* f, Node* node) {
             else if (obj_type->kind == TYPE_PTR) inner_type = obj_type->as.ptr_type.inner;
         }
 
-        if (inner_type && inner_type->kind == TYPE_INTERFACE) {
+        if (node->as.method_call.is_mono) {
+            // monomorphized generic method — emit as standalone function call
+            emit_mangled(gen, f, node->as.method_call.method_name,
+                         node->as.method_call.method_name_size);
+            fprintf(f, "(");
+            bool is_ptr = obj_type && (obj_type->kind == TYPE_REF || obj_type->kind == TYPE_PTR);
+            if (!is_ptr) fprintf(f, "&");
+            emit_expr(gen, f, object);
+            NodeList* args = &node->as.method_call.args;
+            for (size_t i = 0; i < args->count; i++) {
+                fprintf(f, ", ");
+                emit_expr(gen, f, args->nodes[i]);
+            }
+            fprintf(f, ")");
+        } else if (inner_type && inner_type->kind == TYPE_INTERFACE) {
             // vtable dispatch: obj.vtable->method(obj.data, args...)
             emit_expr(gen, f, object);
             fprintf(f, ".vtable->%.*s(",
@@ -420,6 +434,9 @@ static void emit_expr(CodeGen* gen, FILE* f, Node* node) {
         fprintf(f, "){ ");
 
         FieldInitList* inits = &node->as.struct_literal.fields;
+        if (inits->count == 0) {
+            fprintf(f, "0");
+        }
         for (size_t i = 0; i < inits->count; i++) {
             if (i > 0) fprintf(f, ", ");
             fprintf(f, ".%.*s = ", (int)inits->inits[i].name_size, inits->inits[i].name);
@@ -788,6 +805,8 @@ static void emit_func_signature(CodeGen* gen, FILE* f, Node* func_node, bool is_
     Type* func_type = get_type(func_node);
     if (!func_type || func_type->kind != TYPE_FUNC) return;
 
+    Type* method_of = (Type*)func_node->as.func_decl.method_of;
+
     if (is_static) fprintf(f, "static ");
     emit_type(gen, f, func_type->as.func_type.return_type);
     fprintf(f, " ");
@@ -795,7 +814,17 @@ static void emit_func_signature(CodeGen* gen, FILE* f, Node* func_node, bool is_
     fprintf(f, "(");
 
     ParamList* params = &func_node->as.func_decl.params;
-    if (params->count == 0) {
+    if (method_of) {
+        // monomorphized generic method — inject self parameter
+        emit_mangled(gen, f, method_of->as.struct_type.name,
+                     method_of->as.struct_type.name_size);
+        fprintf(f, "* self");
+        for (size_t i = 0; i < params->count; i++) {
+            fprintf(f, ", ");
+            emit_type(gen, f, func_type->as.func_type.param_types[i]);
+            fprintf(f, " %.*s", (int)params->params[i].name_size, params->params[i].name);
+        }
+    } else if (params->count == 0) {
         fprintf(f, "void");
     } else {
         for (size_t i = 0; i < params->count; i++) {
@@ -848,6 +877,7 @@ static void emit_interface_typedefs(CodeGen* gen, FILE* f, Type* iface) {
     for (size_t i = 0; i < sigs->count; i++) {
         Node* sig = sigs->nodes[i];
         if (sig->type != NODE_FUNC_DECL) continue;
+        if (sig->as.func_decl.type_params.count > 0) continue; // skip generic methods
         Type* sig_type = get_type(sig);
         fprintf(f, "    ");
         // return type
@@ -901,6 +931,7 @@ static void emit_vtable_instance(CodeGen* gen, FILE* f, ImplPair* pair) {
     for (size_t i = 0; i < sigs->count; i++) {
         Node* sig = sigs->nodes[i];
         if (sig->type != NODE_FUNC_DECL) continue;
+        if (sig->as.func_decl.type_params.count > 0) continue; // skip generic methods
         Type* sig_type = get_type(sig);
 
         fprintf(f, "static ");
@@ -955,6 +986,7 @@ static void emit_vtable_instance(CodeGen* gen, FILE* f, ImplPair* pair) {
     for (size_t i = 0; i < sigs->count; i++) {
         Node* sig = sigs->nodes[i];
         if (sig->type != NODE_FUNC_DECL) continue;
+        if (sig->as.func_decl.type_params.count > 0) continue; // skip generic methods
         fprintf(f, "    .%.*s = ",
                 (int)sig->as.func_decl.name_size, sig->as.func_decl.name);
         gen->mod = pair->struct_module;
@@ -1039,6 +1071,7 @@ static void emit_h_file(CodeGen* gen) {
         for (size_t i = 0; i < methods->count; i++) {
             Node* method = methods->nodes[i];
             if (method->type != NODE_FUNC_DECL) continue;
+            if (method->as.func_decl.type_params.count > 0) continue; // skip generic
             emit_method_signature(gen, f, method,
                 node->as.struct_decl.name, node->as.struct_decl.name_size, false);
             fprintf(f, ";\n");
@@ -1263,6 +1296,7 @@ static void emit_c_file(CodeGen* gen) {
         for (size_t i = 0; i < methods->count; i++) {
             Node* method = methods->nodes[i];
             if (method->type != NODE_FUNC_DECL) continue;
+            if (method->as.func_decl.type_params.count > 0) continue; // skip generic
             if (!is_exported_struct) {
                 // non-exported struct: methods are static
                 emit_method_signature(gen, f, method,
@@ -1342,6 +1376,7 @@ static void emit_c_file(CodeGen* gen) {
         for (size_t i = 0; i < methods->count; i++) {
             Node* method = methods->nodes[i];
             if (method->type != NODE_FUNC_DECL) continue;
+            if (method->as.func_decl.type_params.count > 0) continue; // skip generic
 
             emit_method_signature(gen, f, method,
                 snode->as.struct_decl.name, snode->as.struct_decl.name_size, is_static);

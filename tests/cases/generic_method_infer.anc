@@ -1,0 +1,13 @@
+# expect: 7
+struct Box
+    value: int
+
+    func add[T](x: T): T
+        return x
+    end
+end
+
+func main(): int
+    var b = Box(value = 5)
+    return b.add(7)
+end

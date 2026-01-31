@@ -316,6 +316,7 @@ static void resolve_module_types(Arena* arena, Errors* errors,
             for (size_t i = 0; i < sigs->count; i++) {
                 Node* sig = sigs->nodes[i];
                 if (sig->type != NODE_FUNC_DECL || sig->resolved_type) continue;
+                if (sig->as.func_decl.type_params.count > 0) continue; // skip generic sigs
                 ParamList* params = &sig->as.func_decl.params;
                 int param_count = (int)params->count;
                 Type** param_types = NULL;
@@ -491,6 +492,10 @@ static bool check_interface_satisfaction(CheckContext* ctx, Type* struct_type, T
                 memcmp(m->as.func_decl.name, sig_name, sig_name_size) == 0) {
                 // check param count matches
                 if (m->as.func_decl.params.count != sig->as.func_decl.params.count) {
+                    return false;
+                }
+                // check type param count matches (generic methods)
+                if (m->as.func_decl.type_params.count != sig->as.func_decl.type_params.count) {
                     return false;
                 }
                 found = true;
@@ -832,6 +837,7 @@ static Node* deep_copy_node(Arena* arena, Node* src, TypeSubst* subst) {
     case NODE_METHOD_CALL:
         dst->as.method_call.object = deep_copy_node(arena, src->as.method_call.object, subst);
         dst->as.method_call.args = deep_copy_node_list(arena, &src->as.method_call.args, subst);
+        dst->as.method_call.type_args = deep_copy_node_list(arena, &src->as.method_call.type_args, subst);
         break;
     case NODE_STRUCT_LITERAL:
         dst->as.struct_literal.fields = deep_copy_field_init_list(arena, &src->as.struct_literal.fields, subst);
@@ -1037,6 +1043,112 @@ static Type* instantiate_generic_func(CheckContext* ctx, Node* template_decl,
 
     // type-check the monomorphized body
     check_func_body(ctx, mono);
+
+    return func_t;
+}
+
+// Instantiate a generic method with concrete type arguments.
+// Similar to instantiate_generic_func but injects a `self` parameter and
+// sets self_type during body checking. The monomorphized method becomes a
+// standalone function (SYMBOL_FUNC) with mangled name struct__method__TypeArgs.
+static Type* instantiate_generic_method(CheckContext* ctx, Node* template_decl,
+                                         Type* struct_type, Type** type_args,
+                                         size_t type_arg_count) {
+    TypeParamList* params = &template_decl->as.func_decl.type_params;
+    if (type_arg_count != params->count) {
+        errors_push(ctx->errors, SEVERITY_ERROR, template_decl->offset,
+                    template_decl->line, template_decl->column,
+                    "generic method '%.*s' expects %d type arguments, got %d",
+                    (int)template_decl->as.func_decl.name_size,
+                    template_decl->as.func_decl.name,
+                    (int)params->count, (int)type_arg_count);
+        return NULL;
+    }
+
+    // dedup
+    GenericInst* existing = find_generic_inst(ctx->mod, template_decl, type_args, type_arg_count);
+    if (existing) return existing->resolved_type;
+
+    // build substitution map
+    TypeSubst subst = build_subst(ctx->arena, params, type_args, type_arg_count);
+
+    // build mangled name: struct_name__method_name__TypeArgs
+    // First build "struct__method" base name
+    char* sname = struct_type->as.struct_type.name;
+    size_t sname_size = struct_type->as.struct_type.name_size;
+    char* mname = template_decl->as.func_decl.name;
+    size_t mname_size = template_decl->as.func_decl.name_size;
+    size_t base_size = sname_size + 2 + mname_size; // struct__method
+    char* base = arena_alloc(ctx->arena, base_size + 1);
+    memcpy(base, sname, sname_size);
+    base[sname_size] = '_';
+    base[sname_size + 1] = '_';
+    memcpy(base + sname_size + 2, mname, mname_size);
+    base[base_size] = '\0';
+
+    size_t mangled_size;
+    char* mangled = build_mangled_name(ctx->arena, base, base_size,
+                                        type_args, type_arg_count, &mangled_size);
+
+    // deep-copy the template with type substitutions
+    Node* mono = deep_copy_node(ctx->arena, template_decl, &subst);
+    mono->as.func_decl.name = mangled;
+    mono->as.func_decl.name_size = mangled_size;
+    mono->as.func_decl.method_of = struct_type; // mark as monomorphized method
+
+    // Build function type: (params...) -> return_type
+    // The type matches the method's declared params (no self).
+    // Codegen will add self to the C signature separately.
+    ParamList* mono_params = &mono->as.func_decl.params;
+    int param_count = (int)mono_params->count;
+    Type** param_types = NULL;
+    if (param_count > 0) {
+        param_types = arena_alloc(ctx->arena, sizeof(Type*) * param_count);
+        for (int i = 0; i < param_count; i++) {
+            Type* pt = (Type*)mono_params->params[i].type_node->resolved_type;
+            if (!pt) {
+                pt = resolve_generic_type(ctx, mono_params->params[i].type_node);
+            }
+            param_types[i] = pt;
+        }
+    }
+
+    Type* ret = NULL;
+    if (mono->as.func_decl.return_type) {
+        ret = (Type*)mono->as.func_decl.return_type->resolved_type;
+        if (!ret) {
+            ret = resolve_generic_type(ctx, mono->as.func_decl.return_type);
+        }
+    } else {
+        ret = type_void(ctx->reg);
+    }
+
+    Type* func_t = type_func(ctx->reg, param_types, param_count, ret);
+    mono->resolved_type = func_t;
+
+    // register the instantiation
+    GenericInst* inst = arena_alloc(ctx->arena, sizeof(GenericInst));
+    inst->next = NULL;
+    inst->template_decl = template_decl;
+    inst->type_args = arena_alloc(ctx->arena, sizeof(Type*) * type_arg_count);
+    memcpy(inst->type_args, type_args, sizeof(Type*) * type_arg_count);
+    inst->type_arg_count = type_arg_count;
+    inst->mangled_name = mangled;
+    inst->mangled_name_size = mangled_size;
+    inst->mono_decl = mono;
+    inst->resolved_type = func_t;
+    generic_inst_add(ctx->arena, ctx->mod, inst);
+
+    // add a symbol for the monomorphized function
+    symbol_add(ctx->arena, ctx->mod->symbols, SYMBOL_FUNC, mangled, mangled_size,
+               false, mono);
+
+    // type-check the monomorphized body with self_type set
+    Type* self_ref = type_ref(ctx->reg, struct_type);
+    Type* prev_self = ctx->self_type;
+    ctx->self_type = self_ref;
+    check_func_body(ctx, mono);
+    ctx->self_type = prev_self;
 
     return func_t;
 }
@@ -1356,6 +1468,21 @@ static Type* check_expr(CheckContext* ctx, Node* node) {
                 break;
             }
 
+            // Handle empty struct literal: StructName() parsed as call expr
+            if (sym->kind == SYMBOL_STRUCT && node->as.call_expr.args.count == 0) {
+                Type* st = get_symbol_type(sym);
+                if (st && st->kind == TYPE_STRUCT) {
+                    result = st;
+                    // Rewrite node to struct literal for codegen
+                    node->type = NODE_STRUCT_LITERAL;
+                    node->as.struct_literal.struct_name = callee->as.identifier.name;
+                    node->as.struct_literal.struct_name_size = callee->as.identifier.name_size;
+                    memset(&node->as.struct_literal.fields, 0, sizeof(FieldInitList));
+                    memset(&node->as.struct_literal.type_args, 0, sizeof(NodeList));
+                    break;
+                }
+            }
+
             // Handle generic function calls
             if (sym->kind == SYMBOL_FUNC && sym->node &&
                 sym->node->as.func_decl.type_params.count > 0) {
@@ -1636,6 +1763,59 @@ static Type* check_expr(CheckContext* ctx, Node* node) {
         } else {
             errors_push(ctx->errors, SEVERITY_ERROR, node->offset, node->line, node->column,
                         "cannot call method on type '%s'", type_name(obj_type));
+            break;
+        }
+
+        // Handle generic method: monomorphize and rewrite as function call
+        if (method_node->as.func_decl.type_params.count > 0 && struct_type) {
+            NodeList* explicit_type_args = &node->as.method_call.type_args;
+            NodeList* call_args = &node->as.method_call.args;
+
+            // Type-check arguments first (needed for inference)
+            for (size_t i = 0; i < call_args->count; i++) {
+                check_expr(ctx, call_args->nodes[i]);
+            }
+
+            Type** type_args = NULL;
+            size_t type_arg_count = 0;
+
+            if (explicit_type_args->count > 0) {
+                type_arg_count = explicit_type_args->count;
+                type_args = arena_alloc(ctx->arena, sizeof(Type*) * type_arg_count);
+                for (size_t i = 0; i < type_arg_count; i++) {
+                    type_args[i] = resolve_type_node(ctx->reg, ctx->errors,
+                                                      ctx->mod->symbols,
+                                                      explicit_type_args->nodes[i]);
+                }
+            } else {
+                type_args = infer_type_args(ctx, method_node, call_args, &type_arg_count);
+            }
+
+            if (!type_args) break;
+
+            // Check arg count against method params
+            ParamList* params = &method_node->as.func_decl.params;
+            if (call_args->count != params->count) {
+                errors_push(ctx->errors, SEVERITY_ERROR, node->offset, node->line, node->column,
+                            "method '%.*s' expects %d arguments, got %d",
+                            (int)method_name_size, method_name,
+                            (int)params->count, (int)call_args->count);
+                break;
+            }
+
+            Type* mono_type = instantiate_generic_method(ctx, method_node,
+                                                          struct_type, type_args, type_arg_count);
+            if (!mono_type) break;
+
+            // Find the instantiation to get the mangled name
+            GenericInst* inst = find_generic_inst(ctx->mod, method_node, type_args, type_arg_count);
+            if (inst) {
+                node->as.method_call.method_name = inst->mangled_name;
+                node->as.method_call.method_name_size = inst->mangled_name_size;
+            }
+            node->as.method_call.is_mono = true;
+
+            result = mono_type->as.func_type.return_type;
             break;
         }
 
@@ -2318,6 +2498,7 @@ static void check_struct_methods(CheckContext* ctx, Node* struct_node) {
     for (size_t i = 0; i < methods->count; i++) {
         Node* method = methods->nodes[i];
         if (method->type != NODE_FUNC_DECL) continue;
+        if (method->as.func_decl.type_params.count > 0) continue; // skip generic methods
 
         // resolve method type if not already done
         if (!method->resolved_type) {

@@ -1,0 +1,23 @@
+# expect: 42
+extern func malloc(size: usize): *void
+extern func free(ptr: *void)
+
+struct HeapAllocator
+
+    func create[T](): *T
+        return malloc(sizeof(T)) as *T
+    end
+
+    func destroy[T](ptr: *T)
+        free(ptr as *void)
+    end
+end
+
+func main(): int
+    var heap = HeapAllocator()
+    var ptr = heap.create[int]()
+    *ptr = 42
+    var val = *ptr
+    heap.destroy[int](ptr)
+    return val
+end

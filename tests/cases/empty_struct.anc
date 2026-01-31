@@ -1,0 +1,8 @@
+# expect: 0
+struct Empty
+end
+
+func main(): int
+    var e = Empty()
+    return 0
+end

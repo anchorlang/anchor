@@ -222,6 +222,7 @@ struct Node {
             ParamList params;
             Node* return_type;
             NodeList body;
+            void* method_of; // Type* of struct if this is a monomorphized generic method
         } func_decl;
 
         struct {
@@ -307,7 +308,9 @@ struct Node {
             Node* object;
             char* method_name;
             size_t method_name_size;
+            NodeList type_args;
             NodeList args;
+            bool is_mono; // set by sema when generic method is monomorphized
         } method_call;
         struct {
             char* struct_name;

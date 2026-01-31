@@ -1,0 +1,13 @@
+# expect: 10
+struct Container
+    value: int
+
+    func wrap[T](x: T): T
+        return x
+    end
+end
+
+func main(): int
+    var c = Container(value = 3)
+    return c.wrap[int](10)
+end

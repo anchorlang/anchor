@@ -588,13 +588,26 @@ static Node* parse_postfix(Parser* p) {
         Token* name_tok = expect(p, TOKEN_IDENTIFIER, "Expected field name after '.'.");
         if (!name_tok) return node;
 
-        if (check(p, TOKEN_LEFT_PAREN)) {
+        // parse optional type args: obj.method[int, float](args)
+        NodeList method_type_args = {0};
+        if (check(p, TOKEN_LEFT_BRACKET)) {
+            advance(p); // consume '['
+            while (!check(p, TOKEN_RIGHT_BRACKET) && !check(p, TOKEN_END_OF_FILE)) {
+                Node* type_node = parse_type(p);
+                node_list_push(p->arena, &method_type_args, type_node);
+                if (!match(p, TOKEN_COMMA)) break;
+            }
+            expect(p, TOKEN_RIGHT_BRACKET, "Expected ']' after type arguments.");
+        }
+
+        if (check(p, TOKEN_LEFT_PAREN) || method_type_args.count > 0) {
             // method call
-            advance(p); // consume '('
+            if (check(p, TOKEN_LEFT_PAREN)) advance(p); // consume '('
             Node* call = make_node(p, NODE_METHOD_CALL, dot_tok);
             call->as.method_call.object = node;
             call->as.method_call.method_name = name_tok->value;
             call->as.method_call.method_name_size = name_tok->size;
+            call->as.method_call.type_args = method_type_args;
             memset(&call->as.method_call.args, 0, sizeof(NodeList));
             parse_args_into(p, &call->as.method_call.args);
             expect(p, TOKEN_RIGHT_PAREN, "Expected ')' after method arguments.");
@@ -1101,6 +1114,11 @@ static Node* parse_func_signature(Parser* p) {
     Token* name_tok = expect(p, TOKEN_IDENTIFIER, "Expected function name.");
     if (!name_tok) return NULL;
 
+    TypeParamList type_params = {0};
+    if (check(p, TOKEN_LEFT_BRACKET)) {
+        type_params = parse_type_params(p);
+    }
+
     expect(p, TOKEN_LEFT_PAREN, "Expected '(' after function name.");
     ParamList params = parse_param_list(p);
     expect(p, TOKEN_RIGHT_PAREN, "Expected ')' after parameters.");
@@ -1114,6 +1132,7 @@ static Node* parse_func_signature(Parser* p) {
     node->as.func_decl.is_export = false;
     node->as.func_decl.name = name_tok->value;
     node->as.func_decl.name_size = name_tok->size;
+    node->as.func_decl.type_params = type_params;
     node->as.func_decl.params = params;
     node->as.func_decl.return_type = return_type;
     memset(&node->as.func_decl.body, 0, sizeof(NodeList));
