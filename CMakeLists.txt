@@ -15,6 +15,7 @@ add_executable (ancc
     "src/lexer.c"
     "src/main.c"
     "src/module.c"
+    "src/os.c"
     "src/package.c"
     "src/parser.c"
     "src/sema.c"

@@ -6,6 +6,7 @@
 #include "codegen.h"
 #include "package.h"
 #include "fs.h"
+#include "os.h"
 #include "error.h"
 
 #include <stdio.h>
@@ -130,10 +131,34 @@ int main(int argc, char** argv) {
 
         sema_analyze(&arena, &errors, &graph);
 
+        char output_dir[1024];
+        snprintf(output_dir, sizeof(output_dir), "%s/build", dir);
+
         if (errors.count == 0) {
-            char output_dir[1024];
-            snprintf(output_dir, sizeof(output_dir), "%s/build", dir);
             codegen(&arena, &errors, &pkg, &graph, entry, output_dir);
+        }
+
+        if (errors.count == 0) {
+            char cmd[4096];
+            int pos = snprintf(cmd, sizeof(cmd), "gcc -std=c99 -o %s/%s", output_dir, pkg.name);
+#ifdef _WIN32
+            pos += snprintf(cmd + pos, sizeof(cmd) - pos, ".exe");
+#endif
+            for (Module* m = graph.first; m; m = m->next) {
+                if (!m->symbols) continue;
+                pos += snprintf(cmd + pos, sizeof(cmd) - pos,
+                                " %s/anc__%s__%s.c", output_dir, pkg.name, m->name);
+            }
+            pos += snprintf(cmd + pos, sizeof(cmd) - pos, " 2>&1");
+
+            char cc_output[4096];
+            int status = os_cmd_run(cmd, cc_output, sizeof(cc_output));
+            if (status != 0) {
+                errors_push(&errors, SEVERITY_ERROR, 0, 0, 0, "C compilation failed");
+                if (cc_output[0] != '\0') {
+                    fprintf(stderr, "%s", cc_output);
+                }
+            }
         }
 
         printf("package: %s\n", pkg.name);
