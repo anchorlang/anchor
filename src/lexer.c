@@ -119,6 +119,7 @@ static void lexer_read_identifier_or_keyword(Lexer* lexer) {
         else if (strncmp(start, "struct", 6) == 0)  type = TOKEN_STRUCT;
         else if (strncmp(start, "import", 6) == 0)  type = TOKEN_IMPORT;
         else if (strncmp(start, "extern", 6) == 0)  type = TOKEN_EXTERN;
+        else if (strncmp(start, "sizeof", 6) == 0)  type = TOKEN_SIZEOF;
         break;
     case 8:
         if (strncmp(start, "continue", 8) == 0)     type = TOKEN_CONTINUE;

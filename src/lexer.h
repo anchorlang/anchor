@@ -22,6 +22,7 @@ typedef enum TokenType {
     TOKEN_CONST,
     TOKEN_EXPORT,
     TOKEN_EXTERN,
+    TOKEN_SIZEOF,
     TOKEN_VAR,
     TOKEN_IF,
     TOKEN_ELSEIF,

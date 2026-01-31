@@ -841,6 +841,9 @@ static Node* deep_copy_node(Arena* arena, Node* src, TypeSubst* subst) {
         dst->as.cast_expr.expr = deep_copy_node(arena, src->as.cast_expr.expr, subst);
         dst->as.cast_expr.target_type = deep_copy_node(arena, src->as.cast_expr.target_type, subst);
         break;
+    case NODE_SIZEOF_EXPR:
+        dst->as.sizeof_expr.type_node = deep_copy_node(arena, src->as.sizeof_expr.type_node, subst);
+        break;
     case NODE_ARRAY_LITERAL:
         dst->as.array_literal.elements = deep_copy_node_list(arena, &src->as.array_literal.elements, subst);
         break;
@@ -1768,6 +1771,18 @@ static Type* check_expr(CheckContext* ctx, Node* node) {
             }
         }
         result = to;
+        break;
+    }
+
+    case NODE_SIZEOF_EXPR: {
+        Type* t = resolve_generic_type(ctx, node->as.sizeof_expr.type_node);
+        if (!t) {
+            errors_push(ctx->errors, SEVERITY_ERROR, node->offset, node->line, node->column,
+                        "unknown type in sizeof");
+        } else {
+            node->as.sizeof_expr.type_node->resolved_type = t;
+        }
+        result = type_usize(ctx->reg);
         break;
     }
 

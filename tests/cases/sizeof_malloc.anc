@@ -1,0 +1,11 @@
+# expect: 42
+extern func malloc(size: usize): *void
+extern func free(ptr: *void)
+
+func main(): int
+    var ptr: *int = malloc(sizeof(int)) as *int
+    *ptr = 42
+    var val = *ptr
+    free(ptr as *void)
+    return val
+end

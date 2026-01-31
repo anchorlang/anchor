@@ -453,6 +453,14 @@ static void emit_expr(CodeGen* gen, FILE* f, Node* node) {
         break;
     }
 
+    case NODE_SIZEOF_EXPR: {
+        Type* t = node->as.sizeof_expr.type_node->resolved_type;
+        fprintf(f, "sizeof(");
+        emit_type(gen, f, t);
+        fprintf(f, ")");
+        break;
+    }
+
     case NODE_ARRAY_LITERAL: {
         NodeList* elems = &node->as.array_literal.elements;
         fprintf(f, "{ ");

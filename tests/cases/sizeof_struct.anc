@@ -1,0 +1,10 @@
+# expect: 8
+struct Point
+    x: int
+    y: int
+end
+
+func main(): int
+    var s = sizeof(Point)
+    return s as int
+end

@@ -48,6 +48,7 @@ typedef enum NodeType {
     NODE_METHOD_CALL,
     NODE_STRUCT_LITERAL,
     NODE_CAST_EXPR,
+    NODE_SIZEOF_EXPR,
     NODE_ARRAY_LITERAL,
     NODE_INDEX_EXPR,
 
@@ -315,6 +316,7 @@ struct Node {
             FieldInitList fields;
         } struct_literal;
         struct { Node* expr; Node* target_type; } cast_expr;
+        struct { Node* type_node; } sizeof_expr;
         struct { NodeList elements; } array_literal;
         struct { Node* object; Node* index; } index_expr;
 

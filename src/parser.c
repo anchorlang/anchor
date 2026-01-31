@@ -465,6 +465,15 @@ static Node* parse_primary(Parser* p) {
         node->as.bool_literal.value = false;
         return node;
     }
+    case TOKEN_SIZEOF: {
+        advance(p);
+        expect(p, TOKEN_LEFT_PAREN, "Expected '(' after 'sizeof'.");
+        Node* type_node = parse_type(p);
+        expect(p, TOKEN_RIGHT_PAREN, "Expected ')' after type in sizeof.");
+        Node* node = make_node(p, NODE_SIZEOF_EXPR, tok);
+        node->as.sizeof_expr.type_node = type_node;
+        return node;
+    }
     case TOKEN_NULL: {
         advance(p);
         return make_node(p, NODE_NULL_LITERAL, tok);
@@ -1852,6 +1861,13 @@ void ast_print(Node* node, int indent) {
         print_indent(indent + 1);
         printf("target:\n");
         ast_print(node->as.cast_expr.target_type, indent + 2);
+        break;
+
+    case NODE_SIZEOF_EXPR:
+        printf("SizeofExpr [%zu:%zu]\n", node->line, node->column);
+        print_indent(indent + 1);
+        printf("type:\n");
+        ast_print_type(node->as.sizeof_expr.type_node, indent + 2);
         break;
 
     case NODE_ARRAY_LITERAL:

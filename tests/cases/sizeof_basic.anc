@@ -1,0 +1,5 @@
+# expect: 4
+func main(): int
+    var s = sizeof(int)
+    return s as int
+end
