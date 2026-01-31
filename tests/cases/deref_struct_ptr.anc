@@ -1,0 +1,12 @@
+# expect: 5
+struct Point
+    x: int
+    y: int
+end
+
+func main(): int
+    var p = Point(x = 5, y = 3)
+    var ptr: *Point = &p
+    var copy = *ptr
+    return copy.x
+end

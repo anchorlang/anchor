@@ -620,6 +620,14 @@ static Node* parse_unary(Parser* p) {
         node->as.unary_expr.operand = operand;
         return node;
     }
+    if (check(p, TOKEN_STAR)) {
+        Token* tok = advance(p);
+        Node* operand = parse_unary(p);
+        Node* node = make_node(p, NODE_UNARY_EXPR, tok);
+        node->as.unary_expr.op = TOKEN_STAR;
+        node->as.unary_expr.operand = operand;
+        return node;
+    }
     if (check(p, TOKEN_NOT)) {
         Token* tok = advance(p);
         Node* operand = parse_unary(p);

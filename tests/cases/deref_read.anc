@@ -1,0 +1,7 @@
+# expect: 42
+func main(): int
+    var x = 42
+    var ptr: *int = &x
+    var val = *ptr
+    return val
+end

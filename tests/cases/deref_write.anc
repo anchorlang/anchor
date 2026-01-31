@@ -1,0 +1,7 @@
+# expect: 10
+func main(): int
+    var x = 5
+    var ptr: *int = &x
+    *ptr = 10
+    return x
+end

@@ -1,0 +1,6 @@
+# expect_error: cannot dereference
+func main(): int
+    var x = 42
+    var val = *x
+    return val
+end

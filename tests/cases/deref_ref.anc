@@ -1,0 +1,7 @@
+# expect: 7
+func main(): int
+    var x = 7
+    var ref = &x
+    var val = *ref
+    return val
+end

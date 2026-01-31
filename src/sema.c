@@ -533,7 +533,10 @@ static bool is_lvalue(Node* node) {
     case NODE_IDENTIFIER:
     case NODE_FIELD_ACCESS:
     case NODE_SELF:
+    case NODE_INDEX_EXPR:
         return true;
+    case NODE_UNARY_EXPR:
+        return node->as.unary_expr.op == TOKEN_STAR;
     default:
         return false;
     }
@@ -1318,6 +1321,15 @@ static Type* check_expr(CheckContext* ctx, Node* node) {
             result = type_bool(ctx->reg);
         } else if (op == TOKEN_AMPERSAND) {
             result = type_ref(ctx->reg, operand);
+        } else if (op == TOKEN_STAR) {
+            if (operand->kind == TYPE_PTR) {
+                result = operand->as.ptr_type.inner;
+            } else if (operand->kind == TYPE_REF) {
+                result = operand->as.ref_type.inner;
+            } else {
+                errors_push(ctx->errors, SEVERITY_ERROR, node->offset, node->line, node->column,
+                            "cannot dereference type '%s' (expected pointer or reference)", type_name(operand));
+            }
         }
         break;
     }

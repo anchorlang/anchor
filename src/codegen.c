@@ -227,6 +227,8 @@ static void emit_expr(CodeGen* gen, FILE* f, Node* node) {
             fprintf(f, "&");
         } else if (op == TOKEN_NOT) {
             fprintf(f, "!");
+        } else if (op == TOKEN_STAR) {
+            fprintf(f, "*");
         }
         emit_expr(gen, f, node->as.unary_expr.operand);
         break;
