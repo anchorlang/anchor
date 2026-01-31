@@ -133,6 +133,19 @@ static void field_list_push(Arena* arena, FieldList* list, Field field) {
     list->fields[list->count++] = field;
 }
 
+static void enum_variant_list_push(Arena* arena, EnumVariantList* list, EnumVariant variant) {
+    if (list->count >= list->capacity) {
+        size_t new_cap = list->capacity < 8 ? 8 : list->capacity * 2;
+        EnumVariant* new_variants = arena_alloc(arena, new_cap * sizeof(EnumVariant));
+        if (list->variants) {
+            memcpy(new_variants, list->variants, list->count * sizeof(EnumVariant));
+        }
+        list->variants = new_variants;
+        list->capacity = new_cap;
+    }
+    list->variants[list->count++] = variant;
+}
+
 static void field_init_list_push(Arena* arena, FieldInitList* list, FieldInit init) {
     if (list->count >= list->capacity) {
         size_t new_cap = list->capacity < 8 ? 8 : list->capacity * 2;
@@ -194,7 +207,7 @@ static void synchronize(Parser* p) {
     while (!check(p, TOKEN_END_OF_FILE)) {
         TokenType t = peek(p)->type;
         if (t == TOKEN_FUNC || t == TOKEN_STRUCT || t == TOKEN_INTERFACE ||
-            t == TOKEN_CONST || t == TOKEN_VAR || t == TOKEN_EXPORT ||
+            t == TOKEN_ENUM || t == TOKEN_CONST || t == TOKEN_VAR || t == TOKEN_EXPORT ||
             t == TOKEN_END || t == TOKEN_RETURN || t == TOKEN_IF ||
             t == TOKEN_FOR || t == TOKEN_WHILE || t == TOKEN_BREAK || t == TOKEN_CONTINUE ||
             t == TOKEN_MATCH || t == TOKEN_CASE || t == TOKEN_ELSE ||
@@ -1134,12 +1147,54 @@ static Node* parse_import_decl(Parser* p) {
     return node;
 }
 
+static Node* parse_enum_decl(Parser* p, bool is_export) {
+    Token* tok = advance(p); // consume ENUM
+    Token* name_tok = expect(p, TOKEN_IDENTIFIER, "Expected enum name.");
+    if (!name_tok) return NULL;
+
+    expect_newline(p);
+    skip_newlines(p);
+
+    Node* node = make_node(p, NODE_ENUM_DECL, tok);
+    node->as.enum_decl.is_export = is_export;
+    node->as.enum_decl.name = name_tok->value;
+    node->as.enum_decl.name_size = name_tok->size;
+    memset(&node->as.enum_decl.variants, 0, sizeof(EnumVariantList));
+
+    while (!check(p, TOKEN_END) && !check(p, TOKEN_END_OF_FILE)) {
+        skip_newlines(p);
+        if (check(p, TOKEN_END)) break;
+
+        if (check(p, TOKEN_IDENTIFIER)) {
+            Token* var_tok = advance(p);
+            EnumVariant variant = {0};
+            variant.name = var_tok->value;
+            variant.name_size = var_tok->size;
+            variant.offset = var_tok->offset;
+            variant.line = var_tok->line;
+            variant.column = var_tok->column;
+            enum_variant_list_push(p->arena, &node->as.enum_decl.variants, variant);
+            expect_newline(p);
+        } else {
+            errors_push(p->errors, SEVERITY_ERROR, peek(p)->offset, peek(p)->line, peek(p)->column,
+                         "Expected variant name in enum.");
+            p->had_error = true;
+            synchronize(p);
+        }
+        skip_newlines(p);
+    }
+
+    expect(p, TOKEN_END, "Expected 'end' to close enum.");
+    return node;
+}
+
 static Node* parse_export_declaration(Parser* p) {
     advance(p); // consume EXPORT
     if (check(p, TOKEN_CONST))  return parse_const_decl(p, true);
     if (check(p, TOKEN_VAR))    return parse_var_decl(p, true);
     if (check(p, TOKEN_FUNC))   return parse_func_decl(p, true);
     if (check(p, TOKEN_STRUCT)) return parse_struct_decl(p, true);
+    if (check(p, TOKEN_ENUM))   return parse_enum_decl(p, true);
 
     Token* tok = peek(p);
     errors_push(p->errors, SEVERITY_ERROR, tok->offset, tok->line, tok->column,
@@ -1177,6 +1232,8 @@ static Node* parse_program(Parser* p) {
             decl = parse_struct_decl(p, false);
         } else if (check(p, TOKEN_INTERFACE)) {
             decl = parse_interface_decl(p);
+        } else if (check(p, TOKEN_ENUM)) {
+            decl = parse_enum_decl(p, false);
         } else {
             Token* t = peek(p);
             errors_push(p->errors, SEVERITY_ERROR, t->offset, t->line, t->column,
@@ -1673,6 +1730,18 @@ void ast_print(Node* node, int indent) {
         print_indent(indent + 1);
         printf("index:\n");
         ast_print(node->as.index_expr.index, indent + 2);
+        break;
+
+    case NODE_ENUM_DECL:
+        printf("EnumDecl [%zu:%zu] %.*s%s\n",
+               node->line, node->column,
+               (int)node->as.enum_decl.name_size, node->as.enum_decl.name,
+               node->as.enum_decl.is_export ? " (export)" : "");
+        for (size_t i = 0; i < node->as.enum_decl.variants.count; i++) {
+            EnumVariant* v = &node->as.enum_decl.variants.variants[i];
+            print_indent(indent + 1);
+            printf("%.*s\n", (int)v->name_size, v->name);
+        }
         break;
 
     case NODE_TYPE_SIMPLE:

@@ -18,6 +18,8 @@ typedef enum NodeType {
     NODE_STRUCT_DECL,
     NODE_INTERFACE_DECL,
 
+    NODE_ENUM_DECL,
+
     // statements
     NODE_RETURN_STMT,
     NODE_IF_STMT,
@@ -138,6 +140,20 @@ typedef struct MatchCaseList {
     size_t capacity;
 } MatchCaseList;
 
+typedef struct EnumVariant {
+    char* name;
+    size_t name_size;
+    size_t offset;
+    size_t line;
+    size_t column;
+} EnumVariant;
+
+typedef struct EnumVariantList {
+    EnumVariant* variants;
+    size_t count;
+    size_t capacity;
+} EnumVariantList;
+
 typedef struct ImportName {
     char* name;
     size_t name_size;
@@ -207,6 +223,13 @@ struct Node {
             size_t name_size;
             NodeList method_sigs;
         } interface_decl;
+
+        struct {
+            bool is_export;
+            char* name;
+            size_t name_size;
+            EnumVariantList variants;
+        } enum_decl;
 
         struct {
             Node* value;

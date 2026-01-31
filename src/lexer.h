@@ -36,6 +36,7 @@ typedef enum TokenType {
     TOKEN_CONTINUE,
     TOKEN_MATCH,
     TOKEN_CASE,
+    TOKEN_ENUM,
     TOKEN_SELF,
     TOKEN_NULL,
     TOKEN_TRUE,

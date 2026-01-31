@@ -111,6 +111,18 @@ Type* type_slice(TypeRegistry* reg, Type* element) {
     return t;
 }
 
+Type* type_enum(TypeRegistry* reg, char* name, size_t name_size,
+                Module* module, EnumVariantList* variants) {
+    Type* t = arena_alloc(reg->arena, sizeof(Type));
+    memset(t, 0, sizeof(Type));
+    t->kind = TYPE_ENUM;
+    t->as.enum_type.name = name;
+    t->as.enum_type.name_size = name_size;
+    t->as.enum_type.module = module;
+    t->as.enum_type.variants = variants;
+    return t;
+}
+
 static int type_name_write(Type* type, char* buf, int size) {
     if (!type) return snprintf(buf, size, "?");
 
@@ -166,6 +178,9 @@ static int type_name_write(Type* type, char* buf, int size) {
         pos += snprintf(buf + pos, size - pos, "[]");
         return pos;
     }
+    case TYPE_ENUM:
+        return snprintf(buf, size, "%.*s",
+                        (int)type->as.enum_type.name_size, type->as.enum_type.name);
     }
     return snprintf(buf, size, "?");
 }

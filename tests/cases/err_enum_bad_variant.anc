@@ -1,0 +1,11 @@
+# expect_error: no variant 'YELLOW' on enum 'Color'
+enum Color
+    RED
+    GREEN
+    BLUE
+end
+
+func main(): int
+    var c = Color.YELLOW
+    return 0
+end

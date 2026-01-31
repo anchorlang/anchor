@@ -106,6 +106,15 @@ static void emit_type(CodeGen* gen, FILE* f, Type* type) {
     case TYPE_SLICE:
         fprintf(f, "anc__slice");
         break;
+    case TYPE_ENUM: {
+        Module* saved = gen->mod;
+        if (type->as.enum_type.module) {
+            gen->mod = type->as.enum_type.module;
+        }
+        emit_mangled(gen, f, type->as.enum_type.name, type->as.enum_type.name_size);
+        gen->mod = saved;
+        break;
+    }
     }
 }
 
@@ -292,6 +301,18 @@ static void emit_expr(CodeGen* gen, FILE* f, Node* node) {
         Type* obj_type = get_type(node->as.field_access.object);
         char* fname = node->as.field_access.field_name;
         size_t fname_size = node->as.field_access.field_name_size;
+
+        // enum variant access: Color.RED -> anc__pkg__mod__Color__RED
+        if (obj_type && obj_type->kind == TYPE_ENUM) {
+            Module* saved = gen->mod;
+            if (obj_type->as.enum_type.module) {
+                gen->mod = obj_type->as.enum_type.module;
+            }
+            emit_mangled(gen, f, obj_type->as.enum_type.name, obj_type->as.enum_type.name_size);
+            gen->mod = saved;
+            fprintf(f, "__%.*s", (int)fname_size, fname);
+            break;
+        }
 
         // array .len -> compile-time constant, .ptr -> array decays to pointer
         if (obj_type && obj_type->kind == TYPE_ARRAY) {
@@ -1005,6 +1026,29 @@ static void emit_h_file(CodeGen* gen) {
         if (methods->count > 0) fprintf(f, "\n");
     }
 
+    // pass 1b: exported enum typedefs
+    for (Symbol* sym = gen->mod->symbols->first; sym; sym = sym->next) {
+        if (sym->kind != SYMBOL_ENUM || !sym->is_export || !sym->node) continue;
+
+        Node* node = sym->node;
+        fprintf(f, "typedef enum ");
+        emit_mangled(gen, f, node->as.enum_decl.name, node->as.enum_decl.name_size);
+        fprintf(f, " {\n");
+
+        EnumVariantList* variants = &node->as.enum_decl.variants;
+        for (size_t i = 0; i < variants->count; i++) {
+            fprintf(f, "    ");
+            emit_mangled(gen, f, node->as.enum_decl.name, node->as.enum_decl.name_size);
+            fprintf(f, "__%.*s", (int)variants->variants[i].name_size, variants->variants[i].name);
+            if (i + 1 < variants->count) fprintf(f, ",");
+            fprintf(f, "\n");
+        }
+
+        fprintf(f, "} ");
+        emit_mangled(gen, f, node->as.enum_decl.name, node->as.enum_decl.name_size);
+        fprintf(f, ";\n\n");
+    }
+
     // pass 2: exported extern const/var
     for (Symbol* sym = gen->mod->symbols->first; sym; sym = sym->next) {
         if (!sym->is_export || !sym->node) continue;
@@ -1092,6 +1136,29 @@ static void emit_c_file(CodeGen* gen) {
 
         fprintf(f, "} ");
         emit_mangled(gen, f, node->as.struct_decl.name, node->as.struct_decl.name_size);
+        fprintf(f, ";\n\n");
+    }
+
+    // non-exported enum typedefs
+    for (Symbol* sym = gen->mod->symbols->first; sym; sym = sym->next) {
+        if (sym->kind != SYMBOL_ENUM || sym->is_export || !sym->node) continue;
+
+        Node* node = sym->node;
+        fprintf(f, "typedef enum ");
+        emit_mangled(gen, f, node->as.enum_decl.name, node->as.enum_decl.name_size);
+        fprintf(f, " {\n");
+
+        EnumVariantList* variants = &node->as.enum_decl.variants;
+        for (size_t i = 0; i < variants->count; i++) {
+            fprintf(f, "    ");
+            emit_mangled(gen, f, node->as.enum_decl.name, node->as.enum_decl.name_size);
+            fprintf(f, "__%.*s", (int)variants->variants[i].name_size, variants->variants[i].name);
+            if (i + 1 < variants->count) fprintf(f, ",");
+            fprintf(f, "\n");
+        }
+
+        fprintf(f, "} ");
+        emit_mangled(gen, f, node->as.enum_decl.name, node->as.enum_decl.name_size);
         fprintf(f, ";\n\n");
     }
 

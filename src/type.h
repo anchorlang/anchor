@@ -32,6 +32,7 @@ typedef enum TypeKind {
     TYPE_PTR,
     TYPE_ARRAY,
     TYPE_SLICE,
+    TYPE_ENUM,
 } TypeKind;
 
 struct Type {
@@ -73,6 +74,13 @@ struct Type {
         struct {
             Type* element;
         } slice_type;
+
+        struct {
+            char* name;
+            size_t name_size;
+            Module* module;
+            EnumVariantList* variants;
+        } enum_type;
     } as;
 };
 
@@ -121,6 +129,8 @@ Type* type_ref(TypeRegistry* reg, Type* inner);
 Type* type_ptr(TypeRegistry* reg, Type* inner);
 Type* type_array(TypeRegistry* reg, Type* element, int size);
 Type* type_slice(TypeRegistry* reg, Type* element);
+Type* type_enum(TypeRegistry* reg, char* name, size_t name_size,
+                Module* module, EnumVariantList* variants);
 
 const char* type_name(Type* type);
 bool type_equals(Type* a, Type* b);

@@ -15,6 +15,7 @@ typedef enum SymbolKind {
     SYMBOL_FUNC,
     SYMBOL_STRUCT,
     SYMBOL_INTERFACE,
+    SYMBOL_ENUM,
     SYMBOL_CONST,
     SYMBOL_VAR,
     SYMBOL_IMPORT,

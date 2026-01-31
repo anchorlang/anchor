@@ -1,0 +1,12 @@
+# expect: 0
+enum Color
+    RED
+    GREEN
+    BLUE
+end
+
+func main(): int
+    var color = Color.RED
+    var color2 = color
+    return color2 as int
+end

@@ -98,6 +98,7 @@ static void lexer_read_identifier_or_keyword(Lexer* lexer) {
         else if (strncmp(start, "else", 4) == 0)    type = TOKEN_ELSE;
         else if (strncmp(start, "step", 4) == 0)    type = TOKEN_STEP;
         else if (strncmp(start, "case", 4) == 0)    type = TOKEN_CASE;
+        else if (strncmp(start, "enum", 4) == 0)    type = TOKEN_ENUM;
         else if (strncmp(start, "self", 4) == 0)    type = TOKEN_SELF;
         else if (strncmp(start, "null", 4) == 0)    type = TOKEN_NULL;
         else if (strncmp(start, "true", 4) == 0)    type = TOKEN_TRUE;
@@ -350,6 +351,7 @@ void lexer_print(Tokens* tokens) {
         [TOKEN_CONTINUE] = "CONTINUE",
         [TOKEN_MATCH] = "MATCH",
         [TOKEN_CASE] = "CASE",
+        [TOKEN_ENUM] = "ENUM",
         [TOKEN_SELF] = "SELF",
         [TOKEN_NULL] = "NULL",
         [TOKEN_TRUE] = "TRUE",

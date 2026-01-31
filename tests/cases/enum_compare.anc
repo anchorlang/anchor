@@ -1,0 +1,15 @@
+# expect: 1
+enum Direction
+    NORTH
+    SOUTH
+    EAST
+    WEST
+end
+
+func main(): int
+    var d = Direction.EAST
+    if d == Direction.EAST
+        return 1
+    end
+    return 0
+end

@@ -93,6 +93,12 @@ static void collect_module_symbols(Arena* arena, Errors* errors, Module* mod) {
             name_size = node->as.interface_decl.name_size;
             is_export = false;
             break;
+        case NODE_ENUM_DECL:
+            kind = SYMBOL_ENUM;
+            name = node->as.enum_decl.name;
+            name_size = node->as.enum_decl.name_size;
+            is_export = node->as.enum_decl.is_export;
+            break;
         case NODE_CONST_DECL:
             kind = SYMBOL_CONST;
             name = node->as.const_decl.name;
@@ -283,6 +289,15 @@ static void resolve_module_types(Arena* arena, Errors* errors,
                         resolve_type_node(reg, errors, mod->symbols, fields->fields[i].type_node);
                 }
             }
+            break;
+        }
+        case SYMBOL_ENUM: {
+            Type* t = type_enum(reg,
+                sym->node->as.enum_decl.name,
+                sym->node->as.enum_decl.name_size,
+                mod,
+                &sym->node->as.enum_decl.variants);
+            sym->node->resolved_type = t;
             break;
         }
         case SYMBOL_INTERFACE: {
@@ -741,6 +756,38 @@ static Type* check_expr(CheckContext* ctx, Node* node) {
     }
 
     case NODE_FIELD_ACCESS: {
+        // check for enum variant access: EnumName.Variant
+        Node* fa_obj = node->as.field_access.object;
+        if (fa_obj && fa_obj->type == NODE_IDENTIFIER) {
+            Symbol* sym = scope_lookup(ctx, fa_obj->as.identifier.name,
+                                        fa_obj->as.identifier.name_size);
+            if (sym && sym->kind == SYMBOL_ENUM) {
+                Type* enum_type = get_symbol_type(sym);
+                if (enum_type && enum_type->kind == TYPE_ENUM) {
+                    char* vname = node->as.field_access.field_name;
+                    size_t vname_size = node->as.field_access.field_name_size;
+                    EnumVariantList* variants = enum_type->as.enum_type.variants;
+                    bool found = false;
+                    for (size_t i = 0; i < variants->count; i++) {
+                        if (variants->variants[i].name_size == vname_size &&
+                            memcmp(variants->variants[i].name, vname, vname_size) == 0) {
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (!found) {
+                        errors_push(ctx->errors, SEVERITY_ERROR, node->offset, node->line, node->column,
+                                    "no variant '%.*s' on enum '%.*s'",
+                                    (int)vname_size, vname,
+                                    (int)enum_type->as.enum_type.name_size, enum_type->as.enum_type.name);
+                    }
+                    fa_obj->resolved_type = enum_type;
+                    result = enum_type;
+                    break;
+                }
+            }
+        }
+
         Type* obj_type = check_expr(ctx, node->as.field_access.object);
         if (!obj_type) break;
 
@@ -952,6 +999,8 @@ static Type* check_expr(CheckContext* ctx, Node* node) {
             if (type_is_numeric(from) && type_is_numeric(to)) allowed = true;
             if (from->kind == TYPE_REF && to->kind == TYPE_REF) allowed = true;
             if (from->kind == TYPE_PTR && to->kind == TYPE_PTR) allowed = true;
+            if (from->kind == TYPE_ENUM && type_is_integer(to)) allowed = true;
+            if (type_is_integer(from) && to->kind == TYPE_ENUM) allowed = true;
             if (!allowed) {
                 errors_push(ctx->errors, SEVERITY_ERROR, node->offset, node->line, node->column,
                             "cannot cast '%s' to '%s'", type_name(from), type_name(to));

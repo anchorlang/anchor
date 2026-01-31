@@ -1,0 +1,12 @@
+# expect_error: cannot cast
+enum Color
+    RED
+    GREEN
+    BLUE
+end
+
+func main(): int
+    var c = Color.RED
+    var s = c as string
+    return 0
+end
