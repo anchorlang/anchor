@@ -1,0 +1,23 @@
+# expect: 1
+var released = 0
+
+struct Resource
+    value: int
+
+    func release()
+        released = 1
+    end
+end
+
+func main(): int
+    var i = 0
+    while i < 5
+        with var r = Resource(value = i)
+            if i == 2
+                break
+            end
+        end
+        i += 1
+    end
+    return released
+end

@@ -627,13 +627,41 @@ static void emit_stmt(CodeGen* gen, FILE* f, Node* node) {
     }
 
     case NODE_RETURN_STMT:
-        emit_indent(gen, f);
-        if (node->as.return_stmt.value) {
-            fprintf(f, "return ");
-            emit_expr(gen, f, node->as.return_stmt.value);
-            fprintf(f, ";\n");
+        if (node->as.return_stmt.cleanup.count > 0) {
+            if (node->as.return_stmt.value) {
+                // Evaluate return value before cleanup
+                emit_indent(gen, f);
+                emit_type(gen, f, node->resolved_type);
+                fprintf(f, " __with_ret = ");
+                emit_expr(gen, f, node->as.return_stmt.value);
+                fprintf(f, ";\n");
+                // Emit cleanup calls
+                for (size_t i = 0; i < node->as.return_stmt.cleanup.count; i++) {
+                    emit_indent(gen, f);
+                    emit_expr(gen, f, node->as.return_stmt.cleanup.nodes[i]);
+                    fprintf(f, ";\n");
+                }
+                emit_indent(gen, f);
+                fprintf(f, "return __with_ret;\n");
+            } else {
+                // Void return — emit cleanup then return
+                for (size_t i = 0; i < node->as.return_stmt.cleanup.count; i++) {
+                    emit_indent(gen, f);
+                    emit_expr(gen, f, node->as.return_stmt.cleanup.nodes[i]);
+                    fprintf(f, ";\n");
+                }
+                emit_indent(gen, f);
+                fprintf(f, "return;\n");
+            }
         } else {
-            fprintf(f, "return;\n");
+            emit_indent(gen, f);
+            if (node->as.return_stmt.value) {
+                fprintf(f, "return ");
+                emit_expr(gen, f, node->as.return_stmt.value);
+                fprintf(f, ";\n");
+            } else {
+                fprintf(f, "return;\n");
+            }
         }
         break;
 
@@ -724,11 +752,21 @@ static void emit_stmt(CodeGen* gen, FILE* f, Node* node) {
         break;
 
     case NODE_BREAK_STMT:
+        for (size_t i = 0; i < node->as.break_stmt.cleanup.count; i++) {
+            emit_indent(gen, f);
+            emit_expr(gen, f, node->as.break_stmt.cleanup.nodes[i]);
+            fprintf(f, ";\n");
+        }
         emit_indent(gen, f);
         fprintf(f, "break;\n");
         break;
 
     case NODE_CONTINUE_STMT:
+        for (size_t i = 0; i < node->as.continue_stmt.cleanup.count; i++) {
+            emit_indent(gen, f);
+            emit_expr(gen, f, node->as.continue_stmt.cleanup.nodes[i]);
+            fprintf(f, ";\n");
+        }
         emit_indent(gen, f);
         fprintf(f, "continue;\n");
         break;

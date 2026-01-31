@@ -27,6 +27,7 @@ func create_arena(size: usize): ArenaAllocator
 end
 
 func main(): int
+    var val = 5
     with var arena = create_arena(1024)
         var data = arena.alloc(16)
     end

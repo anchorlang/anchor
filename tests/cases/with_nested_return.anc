@@ -1,0 +1,45 @@
+# expect: 1
+var release_order = 0
+var correct_order = 0
+
+struct Inner
+    value: int
+
+    func release()
+        if release_order == 0
+            correct_order += 1
+        end
+        release_order += 1
+    end
+end
+
+struct Outer
+    value: int
+
+    func release()
+        if release_order == 1
+            correct_order += 1
+        end
+        release_order += 1
+    end
+end
+
+func do_work(): int
+    with var outer = Outer(value = 1)
+        with var inner = Inner(value = 2)
+            return inner.value + outer.value
+        end
+    end
+    return 0
+end
+
+func main(): int
+    var result = do_work()
+    # result should be 3, both releases called in correct order (inner first)
+    if result == 3
+        if correct_order == 2
+            return 1
+        end
+    end
+    return 0
+end

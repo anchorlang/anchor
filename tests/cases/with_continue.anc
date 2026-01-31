@@ -1,0 +1,21 @@
+# expect: 5
+var release_count = 0
+
+struct Resource
+    value: int
+
+    func release()
+        release_count += 1
+    end
+end
+
+func main(): int
+    for i in 0 until 5
+        with var r = Resource(value = i)
+            if i < 3
+                continue
+            end
+        end
+    end
+    return release_count
+end

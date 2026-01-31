@@ -250,7 +250,16 @@ struct Node {
 
         struct {
             Node* value;
+            NodeList cleanup;  // release calls to emit before returning (from with stmts)
         } return_stmt;
+
+        struct {
+            NodeList cleanup;  // release calls to emit before break (from with stmts)
+        } break_stmt;
+
+        struct {
+            NodeList cleanup;  // release calls to emit before continue (from with stmts)
+        } continue_stmt;
 
         struct {
             Node* condition;

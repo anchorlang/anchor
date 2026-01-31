@@ -346,6 +346,8 @@ typedef struct Scope {
     SymbolTable locals;
 } Scope;
 
+#define MAX_WITH_DEPTH 16
+
 typedef struct CheckContext {
     Arena* arena;
     Errors* errors;
@@ -356,6 +358,9 @@ typedef struct CheckContext {
     Type* self_type;
     int loop_depth;
     int real_loop_depth;
+    Node* with_releases[MAX_WITH_DEPTH];
+    int with_depth;
+    int with_depth_at_loop[MAX_WITH_DEPTH];
 } CheckContext;
 
 static Type* resolve_generic_type(CheckContext* ctx, Node* type_node);
@@ -825,6 +830,7 @@ static Node* deep_copy_node(Arena* arena, Node* src, TypeSubst* subst) {
     // Statement nodes
     case NODE_RETURN_STMT:
         dst->as.return_stmt.value = deep_copy_node(arena, src->as.return_stmt.value, subst);
+        dst->as.return_stmt.cleanup = deep_copy_node_list(arena, &src->as.return_stmt.cleanup, subst);
         break;
     case NODE_IF_STMT:
         dst->as.if_stmt.condition = deep_copy_node(arena, src->as.if_stmt.condition, subst);
@@ -923,8 +929,12 @@ static Node* deep_copy_node(Arena* arena, Node* src, TypeSubst* subst) {
     case NODE_NULL_LITERAL:
     case NODE_IDENTIFIER:
     case NODE_SELF:
+        break;
     case NODE_BREAK_STMT:
+        dst->as.break_stmt.cleanup = deep_copy_node_list(arena, &src->as.break_stmt.cleanup, subst);
+        break;
     case NODE_CONTINUE_STMT:
+        dst->as.continue_stmt.cleanup = deep_copy_node_list(arena, &src->as.continue_stmt.cleanup, subst);
         break;
 
     default:
@@ -2134,6 +2144,15 @@ static void check_stmt(CheckContext* ctx, Node* node) {
                             type_name(ctx->return_type));
             }
         }
+        // Attach cleanup calls from enclosing with statements
+        if (ctx->with_depth > 0) {
+            node->as.return_stmt.cleanup.count = ctx->with_depth;
+            node->as.return_stmt.cleanup.nodes = arena_alloc(ctx->arena, sizeof(Node*) * ctx->with_depth);
+            for (int i = 0; i < ctx->with_depth; i++) {
+                node->as.return_stmt.cleanup.nodes[i] = ctx->with_releases[ctx->with_depth - 1 - i];
+            }
+            node->resolved_type = ctx->return_type;
+        }
         break;
     }
 
@@ -2194,6 +2213,7 @@ static void check_stmt(CheckContext* ctx, Node* node) {
         scope_push(ctx);
         scope_add(ctx, SYMBOL_VAR, node->as.for_stmt.var_name, node->as.for_stmt.var_name_size,
                   iter_type, NULL);
+        ctx->with_depth_at_loop[ctx->real_loop_depth] = ctx->with_depth;
         ctx->loop_depth++;
         ctx->real_loop_depth++;
         check_body(ctx, &node->as.for_stmt.body);
@@ -2209,6 +2229,7 @@ static void check_stmt(CheckContext* ctx, Node* node) {
             errors_push(ctx->errors, SEVERITY_ERROR, node->offset, node->line, node->column,
                         "while condition must be bool or pointer, got '%s'", type_name(cond));
         }
+        ctx->with_depth_at_loop[ctx->real_loop_depth] = ctx->with_depth;
         ctx->loop_depth++;
         ctx->real_loop_depth++;
         check_body(ctx, &node->as.while_stmt.body);
@@ -2290,7 +2311,9 @@ static void check_stmt(CheckContext* ctx, Node* node) {
 
             node->as.with_stmt.release = release_call;
 
+            ctx->with_releases[ctx->with_depth++] = release_call;
             check_body(ctx, &node->as.with_stmt.body);
+            ctx->with_depth--;
             scope_pop(ctx, prev);
         } else {
             // "with expr" — manage existing variable
@@ -2343,7 +2366,9 @@ static void check_stmt(CheckContext* ctx, Node* node) {
 
             node->as.with_stmt.release = release_call;
 
+            ctx->with_releases[ctx->with_depth++] = release_call;
             check_body(ctx, &node->as.with_stmt.body);
+            ctx->with_depth--;
         }
         break;
     }
@@ -2352,6 +2377,16 @@ static void check_stmt(CheckContext* ctx, Node* node) {
         if (ctx->loop_depth == 0) {
             errors_push(ctx->errors, SEVERITY_ERROR, node->offset, node->line, node->column,
                         "'break' used outside of loop or match");
+        } else if (ctx->with_depth > 0 && ctx->real_loop_depth > 0) {
+            int loop_with_base = ctx->with_depth_at_loop[ctx->real_loop_depth - 1];
+            int cleanup_count = ctx->with_depth - loop_with_base;
+            if (cleanup_count > 0) {
+                node->as.break_stmt.cleanup.count = cleanup_count;
+                node->as.break_stmt.cleanup.nodes = arena_alloc(ctx->arena, sizeof(Node*) * cleanup_count);
+                for (int i = 0; i < cleanup_count; i++) {
+                    node->as.break_stmt.cleanup.nodes[i] = ctx->with_releases[ctx->with_depth - 1 - i];
+                }
+            }
         }
         break;
 
@@ -2359,6 +2394,16 @@ static void check_stmt(CheckContext* ctx, Node* node) {
         if (ctx->real_loop_depth == 0) {
             errors_push(ctx->errors, SEVERITY_ERROR, node->offset, node->line, node->column,
                         "'continue' used outside of loop");
+        } else if (ctx->with_depth > 0) {
+            int loop_with_base = ctx->with_depth_at_loop[ctx->real_loop_depth - 1];
+            int cleanup_count = ctx->with_depth - loop_with_base;
+            if (cleanup_count > 0) {
+                node->as.continue_stmt.cleanup.count = cleanup_count;
+                node->as.continue_stmt.cleanup.nodes = arena_alloc(ctx->arena, sizeof(Node*) * cleanup_count);
+                for (int i = 0; i < cleanup_count; i++) {
+                    node->as.continue_stmt.cleanup.nodes[i] = ctx->with_releases[ctx->with_depth - 1 - i];
+                }
+            }
         }
         break;
 
@@ -2596,6 +2641,7 @@ static void check_module_bodies(Arena* arena, Errors* errors, TypeRegistry* reg,
     ctx.self_type = NULL;
     ctx.loop_depth = 0;
     ctx.real_loop_depth = 0;
+    ctx.with_depth = 0;
 
     for (Symbol* sym = mod->symbols->first; sym; sym = sym->next) {
         if (!sym->node) continue;

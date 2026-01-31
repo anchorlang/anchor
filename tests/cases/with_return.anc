@@ -1,0 +1,27 @@
+# expect: 1
+var released = 0
+
+struct Resource
+    value: int
+
+    func release()
+        released = 1
+    end
+end
+
+func do_work(): int
+    with var r = Resource(value = 42)
+        return r.value
+    end
+    return 0
+end
+
+func main(): int
+    var result = do_work()
+    if released == 1
+        if result == 42
+            return 1
+        end
+    end
+    return 0
+end
