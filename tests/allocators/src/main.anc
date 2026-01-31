@@ -1,10 +1,24 @@
 extern func malloc(size: usize): *void
 extern func free(ptr: *void)
 
+interface Allocator
+    func alloc(size: usize): *byte
+end
+
 struct ArenaAllocator
     data: *byte
     size: usize
     offset: usize
+
+    func alloc(size: usize): *byte
+        var ptr = self.data + self.offset
+        self.offset += size
+        return ptr
+    end
+
+    func release()
+        free(self.data)
+    end
 end
 
 func create_arena(size: usize): ArenaAllocator
@@ -14,5 +28,7 @@ end
 
 func main(): int
     var arena = create_arena(1024)
+    var data = arena.alloc(16)
+    arena.release()
     return 0
 end

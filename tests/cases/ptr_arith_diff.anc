@@ -1,0 +1,12 @@
+# expect: 3
+extern func malloc(size: usize): *void
+extern func free(ptr: *void)
+
+func main(): int
+    var buf: *int = malloc(16) as *int
+    var a = buf
+    var b = buf + 3
+    var diff = b - a
+    free(buf as *void)
+    return diff as int
+end

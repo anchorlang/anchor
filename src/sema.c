@@ -1418,6 +1418,25 @@ static Type* check_expr(CheckContext* ctx, Node* node) {
             }
             result = type_bool(ctx->reg);
         } else if (op == TOKEN_PLUS || op == TOKEN_MINUS || op == TOKEN_STAR || op == TOKEN_SLASH) {
+            // pointer arithmetic: ptr +/- int, int + ptr, ptr - ptr
+            if (op == TOKEN_PLUS && left->kind == TYPE_PTR && type_is_integer(right)) {
+                result = left;
+                break;
+            }
+            if (op == TOKEN_PLUS && type_is_integer(left) && right->kind == TYPE_PTR) {
+                result = right;
+                break;
+            }
+            if (op == TOKEN_MINUS && left->kind == TYPE_PTR && type_is_integer(right)) {
+                result = left;
+                break;
+            }
+            if (op == TOKEN_MINUS && left->kind == TYPE_PTR && right->kind == TYPE_PTR
+                && type_equals(left, right)) {
+                result = type_isize(ctx->reg);
+                break;
+            }
+            // regular numeric arithmetic
             if (!type_is_numeric(left)) {
                 errors_push(ctx->errors, SEVERITY_ERROR, node->offset, node->line, node->column,
                             "left operand of arithmetic must be numeric, got '%s'", type_name(left));
@@ -2318,11 +2337,16 @@ static void check_stmt(CheckContext* ctx, Node* node) {
         }
         Type* target = check_expr(ctx, node->as.compound_assign_stmt.target);
         Type* value = check_expr(ctx, node->as.compound_assign_stmt.value);
-        if (target && !type_is_numeric(target)) {
+        // pointer arithmetic: ptr += int, ptr -= int
+        bool is_ptr_arith = target && value &&
+            target->kind == TYPE_PTR && type_is_integer(value) &&
+            (node->as.compound_assign_stmt.op == TOKEN_PLUS_ASSIGN ||
+             node->as.compound_assign_stmt.op == TOKEN_MINUS_ASSIGN);
+        if (target && !type_is_numeric(target) && !is_ptr_arith) {
             errors_push(ctx->errors, SEVERITY_ERROR, node->offset, node->line, node->column,
-                        "compound assignment target must be numeric, got '%s'", type_name(target));
+                        "compound assignment target must be numeric or pointer, got '%s'", type_name(target));
         }
-        if (target && value &&
+        if (!is_ptr_arith && target && value &&
             !types_compatible(ctx, target, value, node->as.compound_assign_stmt.value)) {
             errors_push(ctx->errors, SEVERITY_ERROR, node->offset, node->line, node->column,
                         "compound assignment type mismatch: '%s' vs '%s'",

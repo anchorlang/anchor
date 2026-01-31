@@ -1,0 +1,9 @@
+# expect_error: left operand of arithmetic must be numeric
+extern func malloc(size: usize): *void
+
+func main(): int
+    var a: *int = malloc(8) as *int
+    var b: *int = malloc(8) as *int
+    var bad = a + b
+    return 0
+end

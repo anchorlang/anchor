@@ -1,0 +1,15 @@
+# expect: 99
+extern func malloc(size: usize): *void
+extern func free(ptr: *void)
+
+func main(): int
+    var buf: *int = malloc(16) as *int
+    var ptr = buf
+    *ptr = 10
+    ptr += 1
+    *ptr = 99
+    ptr -= 1
+    var result = *(ptr + 1)
+    free(buf as *void)
+    return result
+end
