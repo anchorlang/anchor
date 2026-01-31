@@ -133,7 +133,7 @@ int main(int argc, char** argv) {
         if (errors.count == 0) {
             char output_dir[1024];
             snprintf(output_dir, sizeof(output_dir), "%s/build", dir);
-            codegen(&arena, &errors, &pkg, &graph, output_dir);
+            codegen(&arena, &errors, &pkg, &graph, entry, output_dir);
         }
 
         printf("package: %s\n", pkg.name);

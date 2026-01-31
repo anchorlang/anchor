@@ -1036,7 +1036,7 @@ static void emit_c_file(CodeGen* gen) {
 // Public API
 // ---------------------------------------------------------------------------
 
-bool codegen(Arena* arena, Errors* errors, Package* pkg, ModuleGraph* graph, char* output_dir) {
+bool codegen(Arena* arena, Errors* errors, Package* pkg, ModuleGraph* graph, Module* entry, char* output_dir) {
     dir_ensure(output_dir);
 
     for (Module* mod = graph->first; mod; mod = mod->next) {
@@ -1086,6 +1086,33 @@ bool codegen(Arena* arena, Errors* errors, Package* pkg, ModuleGraph* graph, cha
 
         emit_h_file(&gen);
         emit_c_file(&gen);
+
+        // emit C main() wrapper in entry module
+        if (mod == entry) {
+            Symbol* main_sym = symbol_find(mod->symbols, "main", 4);
+            if (!main_sym || main_sym->kind != SYMBOL_FUNC) {
+                errors_push(errors, SEVERITY_ERROR, 0, 0, 0,
+                            "entry module '%s' has no 'main' function", mod->name);
+            } else {
+                Type* func_type = (Type*)main_sym->node->resolved_type;
+                Type* ret = (func_type && func_type->kind == TYPE_FUNC)
+                            ? func_type->as.func_type.return_type : NULL;
+                bool returns_int = ret && type_is_integer(ret);
+
+                fprintf(c_file, "\nint main(void) {\n");
+                if (returns_int) {
+                    fprintf(c_file, "    return ");
+                    emit_mangled(&gen, c_file, "main", 4);
+                    fprintf(c_file, "();\n");
+                } else {
+                    fprintf(c_file, "    ");
+                    emit_mangled(&gen, c_file, "main", 4);
+                    fprintf(c_file, "();\n");
+                    fprintf(c_file, "    return 0;\n");
+                }
+                fprintf(c_file, "}\n");
+            }
+        }
 
         fclose(h_file);
         fclose(c_file);

@@ -251,3 +251,7 @@ func test_string(): string
     var len: usize = str.len
     return str
 end
+
+func main(): int
+    return 5
+end

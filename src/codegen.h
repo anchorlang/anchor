@@ -8,6 +8,6 @@
 
 #include <stdbool.h>
 
-bool codegen(Arena* arena, Errors* errors, Package* pkg, ModuleGraph* graph, char* output_dir);
+bool codegen(Arena* arena, Errors* errors, Package* pkg, ModuleGraph* graph, Module* entry, char* output_dir);
 
 #endif
