@@ -1449,9 +1449,19 @@ static Type* check_expr(CheckContext* ctx, Node* node) {
                     param_type->kind == TYPE_PTR) {
                     compatible = true;
                 }
+                // allow any *T or &T where *void is expected
+                if (param_type->kind == TYPE_PTR && param_type->as.ptr_type.inner->kind == TYPE_VOID &&
+                    (arg_type->kind == TYPE_PTR || arg_type->kind == TYPE_REF)) {
+                    compatible = true;
+                }
                 // allow &T where *T is expected (references are always valid)
                 if (arg_type->kind == TYPE_REF && param_type->kind == TYPE_PTR &&
                     type_equals(arg_type->as.ref_type.inner, param_type->as.ptr_type.inner)) {
+                    compatible = true;
+                }
+                // allow integer literal coercion to any integer type
+                if (type_is_integer(param_type) && type_is_integer(arg_type) &&
+                    args->nodes[i]->type == NODE_INTEGER_LITERAL) {
                     compatible = true;
                 }
                 if (!compatible) {
@@ -1707,10 +1717,14 @@ static Type* check_expr(CheckContext* ctx, Node* node) {
                         Type* field_type = resolve_type_node(ctx->reg, ctx->errors,
                                                               ctx->mod->symbols, f->type_node);
                         if (field_type && !type_equals(val_type, field_type)) {
-                            // allow *void (null) where any pointer is expected
+                            // allow pointer coercions
                             bool compatible = false;
                             if (val_type->kind == TYPE_PTR && val_type->as.ptr_type.inner->kind == TYPE_VOID &&
                                 field_type->kind == TYPE_PTR) {
+                                compatible = true;
+                            }
+                            if (field_type->kind == TYPE_PTR && field_type->as.ptr_type.inner->kind == TYPE_VOID &&
+                                (val_type->kind == TYPE_PTR || val_type->kind == TYPE_REF)) {
                                 compatible = true;
                             }
                             if (!compatible) {
@@ -1837,6 +1851,11 @@ static void check_stmt(CheckContext* ctx, Node* node) {
                 declared_type->kind == TYPE_PTR) {
                 compatible = true;
             }
+            // allow any *T or &T assigned to *void
+            if (declared_type->kind == TYPE_PTR && declared_type->as.ptr_type.inner->kind == TYPE_VOID &&
+                (init_type->kind == TYPE_PTR || init_type->kind == TYPE_REF)) {
+                compatible = true;
+            }
             // allow integer conversions (C99-style)
             if (type_is_integer(declared_type) && type_is_integer(init_type)) {
                 // integer literals can be assigned to any integer type
@@ -1948,6 +1967,15 @@ static void check_stmt(CheckContext* ctx, Node* node) {
                         else if (type_integer_convertible(val, ctx->return_type)) {
                             compatible = true;
                         }
+                    }
+                    // allow *void coercions in returns
+                    if (val->kind == TYPE_PTR && val->as.ptr_type.inner->kind == TYPE_VOID &&
+                        ctx->return_type->kind == TYPE_PTR) {
+                        compatible = true;
+                    }
+                    if (ctx->return_type->kind == TYPE_PTR && ctx->return_type->as.ptr_type.inner->kind == TYPE_VOID &&
+                        (val->kind == TYPE_PTR || val->kind == TYPE_REF)) {
+                        compatible = true;
                     }
                     if (!compatible) {
                         errors_push(ctx->errors, SEVERITY_ERROR, node->offset, node->line, node->column,
@@ -2149,6 +2177,11 @@ static void check_stmt(CheckContext* ctx, Node* node) {
                 target->kind == TYPE_PTR) {
                 compatible = true;
             }
+            // allow any *T or &T assigned to *void
+            if (target->kind == TYPE_PTR && target->as.ptr_type.inner->kind == TYPE_VOID &&
+                (value->kind == TYPE_PTR || value->kind == TYPE_REF)) {
+                compatible = true;
+            }
             // allow &T assigned to *T (taking address into pointer)
             if (value->kind == TYPE_REF && target->kind == TYPE_PTR) {
                 compatible = true;
@@ -2314,6 +2347,7 @@ static void check_module_bodies(Arena* arena, Errors* errors, TypeRegistry* reg,
         switch (sym->kind) {
         case SYMBOL_FUNC:
             if (sym->node->as.func_decl.type_params.count > 0) break;
+            if (sym->node->as.func_decl.is_extern) break;
             check_func_body(&ctx, sym->node);
             break;
         case SYMBOL_STRUCT:

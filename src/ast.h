@@ -214,6 +214,7 @@ struct Node {
 
         struct {
             bool is_export;
+            bool is_extern;
             char* name;
             size_t name_size;
             TypeParamList type_params;

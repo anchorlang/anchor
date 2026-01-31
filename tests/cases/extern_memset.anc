@@ -1,0 +1,13 @@
+# expect: 0
+extern func malloc(size: usize): *void
+extern func free(ptr: *void)
+extern func memset(ptr: *void, value: int, size: usize): *void
+
+func main(): int
+    var ptr: *int = malloc(8) as *int
+    *ptr = 99
+    memset(ptr as *void, 0, 8)
+    var val = *ptr
+    free(ptr as *void)
+    return val
+end

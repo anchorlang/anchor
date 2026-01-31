@@ -1306,6 +1306,25 @@ static Node* parse_enum_decl(Parser* p, bool is_export) {
     return node;
 }
 
+static Node* parse_extern_declaration(Parser* p) {
+    advance(p); // consume EXTERN
+    if (check(p, TOKEN_FUNC)) {
+        Node* node = parse_func_signature(p);
+        if (node) {
+            node->as.func_decl.is_extern = true;
+        }
+        expect_newline(p);
+        return node;
+    }
+
+    Token* tok = peek(p);
+    errors_push(p->errors, SEVERITY_ERROR, tok->offset, tok->line, tok->column,
+                "Expected 'func' after 'extern'.");
+    p->had_error = true;
+    p->panic_mode = true;
+    return NULL;
+}
+
 static Node* parse_export_declaration(Parser* p) {
     advance(p); // consume EXPORT
     if (check(p, TOKEN_CONST))  return parse_const_decl(p, true);
@@ -1338,6 +1357,8 @@ static Node* parse_program(Parser* p) {
 
         if (check(p, TOKEN_FROM)) {
             decl = parse_import_decl(p);
+        } else if (check(p, TOKEN_EXTERN)) {
+            decl = parse_extern_declaration(p);
         } else if (check(p, TOKEN_EXPORT)) {
             decl = parse_export_declaration(p);
         } else if (check(p, TOKEN_CONST)) {

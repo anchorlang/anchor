@@ -174,7 +174,11 @@ static void emit_expr(CodeGen* gen, FILE* f, Node* node) {
 
         // check if this is a module-level symbol (needs mangling)
         Symbol* sym = symbol_find(gen->mod->symbols, name, name_size);
-        if (sym && sym->kind != SYMBOL_IMPORT) {
+        if (sym && sym->kind == SYMBOL_FUNC && sym->node &&
+            sym->node->as.func_decl.is_extern) {
+            // extern function — emit raw name
+            fprintf(f, "%.*s", (int)name_size, name);
+        } else if (sym && sym->kind != SYMBOL_IMPORT) {
             // module-level symbol — mangle it
             emit_mangled(gen, f, name, name_size);
         } else if (sym && sym->kind == SYMBOL_IMPORT && sym->source) {
@@ -1078,10 +1082,32 @@ static void emit_h_file(CodeGen* gen) {
         }
     }
 
-    // pass 3: exported function declarations
+    // pass 3a: extern function declarations (unmangled)
+    for (Symbol* sym = gen->mod->symbols->first; sym; sym = sym->next) {
+        if (sym->kind != SYMBOL_FUNC || !sym->node) continue;
+        if (!sym->node->as.func_decl.is_extern) continue;
+        Type* func_type = get_type(sym->node);
+        if (!func_type || func_type->kind != TYPE_FUNC) continue;
+        emit_type(gen, f, func_type->as.func_type.return_type);
+        fprintf(f, " %.*s(", (int)sym->name_size, sym->name);
+        ParamList* params = &sym->node->as.func_decl.params;
+        if (params->count == 0) {
+            fprintf(f, "void");
+        } else {
+            for (size_t i = 0; i < params->count; i++) {
+                if (i > 0) fprintf(f, ", ");
+                emit_type(gen, f, func_type->as.func_type.param_types[i]);
+                fprintf(f, " %.*s", (int)params->params[i].name_size, params->params[i].name);
+            }
+        }
+        fprintf(f, ");\n");
+    }
+
+    // pass 3b: exported function declarations
     for (Symbol* sym = gen->mod->symbols->first; sym; sym = sym->next) {
         if (sym->kind != SYMBOL_FUNC || !sym->is_export || !sym->node) continue;
         if (sym->node->as.func_decl.type_params.count > 0) continue; // skip generic templates
+        if (sym->node->as.func_decl.is_extern) continue;
         emit_func_signature(gen, f, sym->node, false);
         fprintf(f, ";\n");
     }
@@ -1194,6 +1220,7 @@ static void emit_c_file(CodeGen* gen) {
     for (Symbol* sym = gen->mod->symbols->first; sym; sym = sym->next) {
         if (sym->kind != SYMBOL_FUNC || sym->is_export || !sym->node) continue;
         if (sym->node->as.func_decl.type_params.count > 0) continue; // skip generic templates
+        if (sym->node->as.func_decl.is_extern) continue;
         emit_func_signature(gen, f, sym->node, true);
         fprintf(f, ";\n");
     }
@@ -1263,6 +1290,7 @@ static void emit_c_file(CodeGen* gen) {
     for (Symbol* sym = gen->mod->symbols->first; sym; sym = sym->next) {
         if (sym->kind != SYMBOL_FUNC || !sym->node) continue;
         if (sym->node->as.func_decl.type_params.count > 0) continue; // skip generic templates
+        if (sym->node->as.func_decl.is_extern) continue;
 
         bool is_static = !sym->is_export;
         emit_func_signature(gen, f, sym->node, is_static);
