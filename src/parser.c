@@ -899,6 +899,7 @@ static Node* parse_match_stmt(Parser* p) {
             errors_push(p->errors, SEVERITY_ERROR, peek(p)->offset, peek(p)->line, peek(p)->column,
                          "Expected 'case', 'else', or 'end' in match statement.");
             p->had_error = true;
+            advance(p); // skip the bad token to guarantee progress
             synchronize(p);
         }
     }
@@ -1153,6 +1154,7 @@ static Node* parse_struct_decl(Parser* p, bool is_export) {
             errors_push(p->errors, SEVERITY_ERROR, peek(p)->offset, peek(p)->line, peek(p)->column,
                          "Expected field or method in struct.");
             p->had_error = true;
+            advance(p); // skip the bad token to guarantee progress
             synchronize(p);
         }
         skip_newlines(p);
@@ -1189,6 +1191,7 @@ static Node* parse_interface_decl(Parser* p) {
             errors_push(p->errors, SEVERITY_ERROR, peek(p)->offset, peek(p)->line, peek(p)->column,
                          "Expected method signature in interface.");
             p->had_error = true;
+            advance(p); // skip the bad token to guarantee progress
             synchronize(p);
         }
         skip_newlines(p);
@@ -1291,6 +1294,7 @@ static Node* parse_enum_decl(Parser* p, bool is_export) {
             errors_push(p->errors, SEVERITY_ERROR, peek(p)->offset, peek(p)->line, peek(p)->column,
                          "Expected variant name in enum.");
             p->had_error = true;
+            advance(p); // skip the bad token to guarantee progress
             synchronize(p);
         }
         skip_newlines(p);
