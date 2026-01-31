@@ -1,6 +1,12 @@
 #include "os.h"
 
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 int os_cmd_run(const char* cmd, char* output, size_t output_cap) {
 #ifdef _WIN32
@@ -25,5 +31,21 @@ int os_cmd_run(const char* cmd, char* output, size_t output_cap) {
     return _pclose(proc);
 #else
     return pclose(proc);
+#endif
+}
+
+bool os_tmp_dir(char* buf, size_t buf_cap) {
+#ifdef _WIN32
+    DWORD len = GetTempPathA((DWORD)buf_cap, buf);
+    if (len == 0 || len >= buf_cap) return false;
+    if (len > 0 && buf[len - 1] == '\\') buf[len - 1] = '\0';
+    return true;
+#else
+    const char* tmp = getenv("TMPDIR");
+    if (!tmp) tmp = "/tmp";
+    size_t len = strlen(tmp);
+    if (len >= buf_cap) return false;
+    memcpy(buf, tmp, len + 1);
+    return true;
 #endif
 }
