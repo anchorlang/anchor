@@ -1,0 +1,14 @@
+# expect: 10
+struct Pair
+    a: int
+    b: int
+
+    func sum(): int
+        return self.a + self.b
+    end
+end
+
+func main(): int
+    var p = Pair(a = 3, b = 7)
+    return p.sum()
+end

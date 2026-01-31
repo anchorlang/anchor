@@ -1,0 +1,5 @@
+# expect_error: 'break' used outside of loop or match
+func main(): int
+    break
+    return 0
+end

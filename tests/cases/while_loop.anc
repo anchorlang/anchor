@@ -1,0 +1,10 @@
+# expect: 45
+func main(): int
+    var result = 0
+    var i = 0
+    while i < 10
+        result += i
+        i += 1
+    end
+    return result
+end

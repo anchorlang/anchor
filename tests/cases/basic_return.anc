@@ -1,0 +1,4 @@
+# expect: 5
+func main(): int
+    return 5
+end

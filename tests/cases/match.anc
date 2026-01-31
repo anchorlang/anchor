@@ -1,0 +1,14 @@
+# expect: 2
+func main(): int
+    var x = 3
+    match x
+    case 0
+        return 0
+    case 1
+        return 1
+    case 2, 3, 4
+        return 2
+    else
+        return 9
+    end
+end

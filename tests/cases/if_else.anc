@@ -1,0 +1,11 @@
+# expect: 1
+func main(): int
+    var a = 5
+    if a > 0
+        return 1
+    elseif a < 0
+        return 2
+    else
+        return 0
+    end
+end

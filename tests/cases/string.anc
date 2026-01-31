@@ -1,0 +1,7 @@
+# expect: 0
+func main(): int
+    var s = "test"
+    var ptr: *byte = s.ptr
+    var len: usize = s.len
+    return 0
+end

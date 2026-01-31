@@ -1,0 +1,6 @@
+# expect_error: duplicate variable
+func main(): int
+    var x = 5
+    var x = 10
+    return x
+end

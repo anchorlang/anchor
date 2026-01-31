@@ -1,0 +1,9 @@
+# expect_error: return with value in void function
+func foo()
+    return 5
+end
+
+func main(): int
+    foo()
+    return 0
+end
