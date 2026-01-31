@@ -1,0 +1,11 @@
+# expect: 5
+struct Box
+    value: int
+end
+
+func main(): int
+    var b = Box(value = 5)
+    var ref = &b
+    var ptr: *Box = ref
+    return ptr.value
+end

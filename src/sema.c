@@ -1437,6 +1437,11 @@ static Type* check_expr(CheckContext* ctx, Node* node) {
                     param_type->kind == TYPE_PTR) {
                     compatible = true;
                 }
+                // allow &T where *T is expected (references are always valid)
+                if (arg_type->kind == TYPE_REF && param_type->kind == TYPE_PTR &&
+                    type_equals(arg_type->as.ref_type.inner, param_type->as.ptr_type.inner)) {
+                    compatible = true;
+                }
                 if (!compatible) {
                     errors_push(ctx->errors, SEVERITY_ERROR, args->nodes[i]->offset,
                                 args->nodes[i]->line, args->nodes[i]->column,
@@ -1845,6 +1850,12 @@ static void check_stmt(CheckContext* ctx, Node* node) {
                                 "struct '%s' does not satisfy interface '%s'",
                                 type_name(init_struct), type_name(decl_iface));
                     compatible = true; // already reported
+                }
+            }
+            // allow &T -> *T (references are always valid, safe to use as pointer)
+            if (declared_type->kind == TYPE_PTR && init_type->kind == TYPE_REF) {
+                if (type_equals(declared_type->as.ptr_type.inner, init_type->as.ref_type.inner)) {
+                    compatible = true;
                 }
             }
             // allow array-to-slice conversion: T[N] -> T[]

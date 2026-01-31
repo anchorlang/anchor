@@ -1,0 +1,12 @@
+# expect_error: declared as '&Box' but initialized with '*Box'
+struct Box
+    value: int
+end
+
+func main(): int
+    var b = Box(value = 5)
+    var ptr: *Box = null
+    ptr = &b
+    var ref: &Box = ptr
+    return 0
+end
