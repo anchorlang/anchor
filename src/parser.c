@@ -1382,6 +1382,7 @@ static Node* parse_program(Parser* p) {
                          "Unexpected top-level token.");
             p->had_error = true;
             p->panic_mode = true;
+            advance(p); // skip the bad token to guarantee progress
             synchronize(p);
             skip_newlines(p);
             continue;
