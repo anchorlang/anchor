@@ -33,6 +33,7 @@ typedef enum TokenType {
     TOKEN_STEP,
     TOKEN_WHILE,
     TOKEN_BREAK,
+    TOKEN_CONTINUE,
     TOKEN_MATCH,
     TOKEN_CASE,
     TOKEN_SELF,

@@ -117,6 +117,9 @@ static void lexer_read_identifier_or_keyword(Lexer* lexer) {
         else if (strncmp(start, "struct", 6) == 0)  type = TOKEN_STRUCT;
         else if (strncmp(start, "import", 6) == 0)  type = TOKEN_IMPORT;
         break;
+    case 8:
+        if (strncmp(start, "continue", 8) == 0)     type = TOKEN_CONTINUE;
+        break;
     case 9:
         if (strncmp(start, "interface", 9) == 0)    type = TOKEN_INTERFACE;
         break;
@@ -341,6 +344,7 @@ void lexer_print(Tokens* tokens) {
         [TOKEN_STEP] = "STEP",
         [TOKEN_WHILE] = "WHILE",
         [TOKEN_BREAK] = "BREAK",
+        [TOKEN_CONTINUE] = "CONTINUE",
         [TOKEN_MATCH] = "MATCH",
         [TOKEN_CASE] = "CASE",
         [TOKEN_SELF] = "SELF",

@@ -337,7 +337,8 @@ typedef struct CheckContext {
     Scope* scope;
     Type* return_type;
     Type* self_type;  // non-NULL inside struct methods
-    int loop_depth;   // > 0 inside for/while/match
+    int loop_depth;      // > 0 inside for/while/match (for break)
+    int real_loop_depth; // > 0 inside for/while only (for continue)
 } CheckContext;
 
 static Scope* scope_push(CheckContext* ctx) {
@@ -1086,7 +1087,9 @@ static void check_stmt(CheckContext* ctx, Node* node) {
         scope_add(ctx, SYMBOL_VAR, node->as.for_stmt.var_name, node->as.for_stmt.var_name_size,
                   iter_type, NULL);
         ctx->loop_depth++;
+        ctx->real_loop_depth++;
         check_body(ctx, &node->as.for_stmt.body);
+        ctx->real_loop_depth--;
         ctx->loop_depth--;
         scope_pop(ctx, prev);
         break;
@@ -1099,7 +1102,9 @@ static void check_stmt(CheckContext* ctx, Node* node) {
                         "while condition must be bool, got '%s'", type_name(cond));
         }
         ctx->loop_depth++;
+        ctx->real_loop_depth++;
         check_body(ctx, &node->as.while_stmt.body);
+        ctx->real_loop_depth--;
         ctx->loop_depth--;
         break;
     }
@@ -1108,6 +1113,13 @@ static void check_stmt(CheckContext* ctx, Node* node) {
         if (ctx->loop_depth == 0) {
             errors_push(ctx->errors, SEVERITY_ERROR, node->offset, node->line, node->column,
                         "'break' used outside of loop or match");
+        }
+        break;
+
+    case NODE_CONTINUE_STMT:
+        if (ctx->real_loop_depth == 0) {
+            errors_push(ctx->errors, SEVERITY_ERROR, node->offset, node->line, node->column,
+                        "'continue' used outside of loop");
         }
         break;
 
@@ -1357,6 +1369,7 @@ static void check_module_bodies(Arena* arena, Errors* errors, TypeRegistry* reg,
     ctx.return_type = NULL;
     ctx.self_type = NULL;
     ctx.loop_depth = 0;
+    ctx.real_loop_depth = 0;
 
     for (Symbol* sym = mod->symbols->first; sym; sym = sym->next) {
         if (!sym->node) continue;

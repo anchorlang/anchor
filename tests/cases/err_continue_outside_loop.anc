@@ -1,0 +1,5 @@
+# expect_error: 'continue' used outside of loop
+func main(): int
+    continue
+    return 0
+end

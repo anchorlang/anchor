@@ -196,7 +196,7 @@ static void synchronize(Parser* p) {
         if (t == TOKEN_FUNC || t == TOKEN_STRUCT || t == TOKEN_INTERFACE ||
             t == TOKEN_CONST || t == TOKEN_VAR || t == TOKEN_EXPORT ||
             t == TOKEN_END || t == TOKEN_RETURN || t == TOKEN_IF ||
-            t == TOKEN_FOR || t == TOKEN_WHILE || t == TOKEN_BREAK ||
+            t == TOKEN_FOR || t == TOKEN_WHILE || t == TOKEN_BREAK || t == TOKEN_CONTINUE ||
             t == TOKEN_MATCH || t == TOKEN_CASE || t == TOKEN_ELSE ||
             t == TOKEN_ELSEIF) {
             return;
@@ -669,6 +669,11 @@ static Node* parse_break_stmt(Parser* p) {
     return make_node(p, NODE_BREAK_STMT, tok);
 }
 
+static Node* parse_continue_stmt(Parser* p) {
+    Token* tok = advance(p); // consume CONTINUE
+    return make_node(p, NODE_CONTINUE_STMT, tok);
+}
+
 static Node* parse_match_stmt(Parser* p) {
     Token* tok = advance(p); // consume MATCH
     Node* subject = parse_expression(p);
@@ -758,8 +763,9 @@ static Node* parse_statement(Parser* p) {
     case TOKEN_IF:     return parse_if_stmt(p);
     case TOKEN_FOR:    return parse_for_stmt(p);
     case TOKEN_WHILE:  return parse_while_stmt(p);
-    case TOKEN_BREAK:  return parse_break_stmt(p);
-    case TOKEN_MATCH:  return parse_match_stmt(p);
+    case TOKEN_BREAK:    return parse_break_stmt(p);
+    case TOKEN_CONTINUE: return parse_continue_stmt(p);
+    case TOKEN_MATCH:    return parse_match_stmt(p);
     default:           return parse_assignment_or_expr_stmt(p);
     }
 }
@@ -1401,6 +1407,10 @@ void ast_print(Node* node, int indent) {
 
     case NODE_BREAK_STMT:
         printf("BreakStmt [%zu:%zu]\n", node->line, node->column);
+        break;
+
+    case NODE_CONTINUE_STMT:
+        printf("ContinueStmt [%zu:%zu]\n", node->line, node->column);
         break;
 
     case NODE_MATCH_STMT:

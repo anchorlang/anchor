@@ -497,6 +497,11 @@ static void emit_stmt(CodeGen* gen, FILE* f, Node* node) {
         fprintf(f, "break;\n");
         break;
 
+    case NODE_CONTINUE_STMT:
+        emit_indent(gen, f);
+        fprintf(f, "continue;\n");
+        break;
+
     case NODE_MATCH_STMT: {
         emit_indent(gen, f);
         fprintf(f, "switch (");

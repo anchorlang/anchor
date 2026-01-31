@@ -1,0 +1,11 @@
+# expect: 15
+func main(): int
+    var result = 0
+    for i in 0 until 10
+        if i > 5
+            continue
+        end
+        result += i
+    end
+    return result
+end

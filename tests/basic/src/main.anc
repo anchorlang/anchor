@@ -252,6 +252,16 @@ func test_string(): string
     return str
 end
 
+func test_continue(): int
+    var result = 0
+    for i in 0 until 20
+        if i > 10
+            continue
+        end
+        result += i
+    end
+end
+
 func main(): int
     return 5
 end
