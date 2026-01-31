@@ -11,6 +11,7 @@
 # Each file transpile to .h and .c file.
 # In .h file are exported identifiers (via export keyword)
 from utils import sign
+from core.math import abs
 
 # Generate to:
 # static const float anc__basic__main__PI = 3.14f;
@@ -312,5 +313,5 @@ func test_enums(): Color
 end
 
 func main(): int
-    return 5
+    return abs(-6)
 end

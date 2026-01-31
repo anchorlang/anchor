@@ -68,17 +68,13 @@ static char* build_file_path(Arena* arena, char* src_dir, char* module_path, siz
 }
 
 static char* extract_module_name(Arena* arena, char* module_path, size_t module_path_size) {
-    // find last dot to get the final segment
-    size_t start = 0;
+    // replace dots with single underscores to preserve full path
+    // e.g. "core.math" -> "core_math"
+    char* name = arena_alloc(arena, module_path_size + 1);
     for (size_t i = 0; i < module_path_size; i++) {
-        if (module_path[i] == '.') {
-            start = i + 1;
-        }
+        name[i] = module_path[i] == '.' ? '_' : module_path[i];
     }
-    size_t name_len = module_path_size - start;
-    char* name = arena_alloc(arena, name_len + 1);
-    memcpy(name, module_path + start, name_len);
-    name[name_len] = '\0';
+    name[module_path_size] = '\0';
     return name;
 }
 
