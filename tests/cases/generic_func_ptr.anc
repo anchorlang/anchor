@@ -1,0 +1,11 @@
+# expect: 10
+func pick[T](a: T, cond: bool): T
+    if cond
+        return a
+    end
+    return a
+end
+
+func main(): int
+    return pick[int](10, true)
+end

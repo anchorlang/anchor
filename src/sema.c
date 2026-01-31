@@ -188,6 +188,7 @@ static void resolve_module_imports(Arena* arena, Errors* errors, ModuleGraph* gr
 static Type* resolve_type_node(TypeRegistry* reg, Errors* errors,
                                 SymbolTable* table, Node* node) {
     if (!node) return type_void(reg);
+    if (node->resolved_type) return (Type*)node->resolved_type;
 
     switch (node->type) {
     case NODE_TYPE_SIMPLE: {
@@ -719,6 +720,8 @@ static Node* deep_copy_node(Arena* arena, Node* src, TypeSubst* subst) {
             // Pre-resolve it so resolve_type_node finds it
             dst->resolved_type = concrete;
         }
+        // Deep-copy type_args so e.g. Node[T] becomes Node[int]
+        dst->as.type_simple.type_args = deep_copy_node_list(arena, &src->as.type_simple.type_args, subst);
         break;
     }
     case NODE_TYPE_REFERENCE:
@@ -868,6 +871,9 @@ static TypeSubst build_subst(Arena* arena, TypeParamList* params, Type** type_ar
     return subst;
 }
 
+// forward declaration — needed because instantiate_generic_struct and resolve_generic_type are mutually recursive
+static Type* resolve_generic_type(CheckContext* ctx, Node* type_node);
+
 // Instantiate a generic struct with concrete type arguments.
 // Returns the resolved Type* for the instantiation.
 static Type* instantiate_generic_struct(CheckContext* ctx, Node* template_decl,
@@ -905,20 +911,8 @@ static Type* instantiate_generic_struct(CheckContext* ctx, Node* template_decl,
                            &mono->as.struct_decl.fields, &mono->as.struct_decl.methods);
     mono->resolved_type = t;
 
-    // resolve field types
-    FieldList* fields = &mono->as.struct_decl.fields;
-    for (size_t i = 0; i < fields->count; i++) {
-        if (fields->fields[i].type_node) {
-            Type* ft = (Type*)fields->fields[i].type_node->resolved_type;
-            if (!ft) {
-                ft = resolve_type_node(ctx->reg, ctx->errors, ctx->mod->symbols,
-                                        fields->fields[i].type_node);
-                fields->fields[i].type_node->resolved_type = ft;
-            }
-        }
-    }
-
-    // register the instantiation
+    // register the instantiation BEFORE resolving fields to break self-referential cycles
+    // (e.g. struct Node[T] { next: *Node[T] } — resolving *Node[int] re-enters instantiate_generic_struct)
     GenericInst* inst = arena_alloc(ctx->arena, sizeof(GenericInst));
     inst->next = NULL;
     inst->template_decl = template_decl;
@@ -934,6 +928,18 @@ static Type* instantiate_generic_struct(CheckContext* ctx, Node* template_decl,
     // add a symbol for the monomorphized struct so codegen can find it
     symbol_add(ctx->arena, ctx->mod->symbols, SYMBOL_STRUCT, mangled, mangled_size,
                template_decl->as.struct_decl.is_export, mono);
+
+    // resolve field types (use resolve_generic_type for fields like *Node[int])
+    FieldList* fields = &mono->as.struct_decl.fields;
+    for (size_t i = 0; i < fields->count; i++) {
+        if (fields->fields[i].type_node) {
+            Type* ft = (Type*)fields->fields[i].type_node->resolved_type;
+            if (!ft) {
+                ft = resolve_generic_type(ctx, fields->fields[i].type_node);
+                fields->fields[i].type_node->resolved_type = ft;
+            }
+        }
+    }
 
     return t;
 }
@@ -979,8 +985,7 @@ static Type* instantiate_generic_func(CheckContext* ctx, Node* template_decl,
         for (int i = 0; i < param_count; i++) {
             Type* pt = (Type*)mono_params->params[i].type_node->resolved_type;
             if (!pt) {
-                pt = resolve_type_node(ctx->reg, ctx->errors, ctx->mod->symbols,
-                                        mono_params->params[i].type_node);
+                pt = resolve_generic_type(ctx, mono_params->params[i].type_node);
             }
             param_types[i] = pt;
         }
@@ -989,8 +994,7 @@ static Type* instantiate_generic_func(CheckContext* ctx, Node* template_decl,
     if (mono->as.func_decl.return_type) {
         ret = (Type*)mono->as.func_decl.return_type->resolved_type;
         if (!ret) {
-            ret = resolve_type_node(ctx->reg, ctx->errors, ctx->mod->symbols,
-                                     mono->as.func_decl.return_type);
+            ret = resolve_generic_type(ctx, mono->as.func_decl.return_type);
         }
     } else {
         ret = type_void(ctx->reg);
@@ -1097,31 +1101,68 @@ static Type** infer_type_args(CheckContext* ctx, Node* template_decl,
     return inferred;
 }
 
-// resolve_type_node wrapper that handles generic type args (e.g. List[int])
+// resolve_type_node wrapper that handles generic type args (e.g. List[int], *List[int])
 static Type* resolve_generic_type(CheckContext* ctx, Node* type_node) {
     if (!type_node) return type_void(ctx->reg);
-    if (type_node->type == NODE_TYPE_SIMPLE && type_node->as.type_simple.type_args.count > 0) {
-        char* name = type_node->as.type_simple.name;
-        size_t name_size = type_node->as.type_simple.name_size;
-        Symbol* sym = symbol_find(ctx->mod->symbols, name, name_size);
-        if (!sym || sym->kind != SYMBOL_STRUCT || !sym->node ||
-            sym->node->as.struct_decl.type_params.count == 0) {
+
+    switch (type_node->type) {
+    case NODE_TYPE_SIMPLE:
+        if (type_node->as.type_simple.type_args.count > 0) {
+            char* name = type_node->as.type_simple.name;
+            size_t name_size = type_node->as.type_simple.name_size;
+            Symbol* sym = symbol_find(ctx->mod->symbols, name, name_size);
+            if (!sym || sym->kind != SYMBOL_STRUCT || !sym->node ||
+                sym->node->as.struct_decl.type_params.count == 0) {
+                errors_push(ctx->errors, SEVERITY_ERROR, type_node->offset,
+                            type_node->line, type_node->column,
+                            "'%.*s' is not a generic struct", (int)name_size, name);
+                return NULL;
+            }
+            NodeList* targs = &type_node->as.type_simple.type_args;
+            size_t type_arg_count = targs->count;
+            Type** type_args = arena_alloc(ctx->arena, sizeof(Type*) * type_arg_count);
+            for (size_t i = 0; i < type_arg_count; i++) {
+                type_args[i] = resolve_generic_type(ctx, targs->nodes[i]);
+                if (!type_args[i]) return NULL;
+            }
+            Type* t = instantiate_generic_struct(ctx, sym->node, type_args, type_arg_count);
+            type_node->resolved_type = t;
+            return t;
+        }
+        break;
+    case NODE_TYPE_POINTER: {
+        Type* inner = resolve_generic_type(ctx, type_node->as.type_ptr.inner);
+        if (!inner) return NULL;
+        return type_ptr(ctx->reg, inner);
+    }
+    case NODE_TYPE_REFERENCE: {
+        Type* inner = resolve_generic_type(ctx, type_node->as.type_ref.inner);
+        if (!inner) return NULL;
+        return type_ref(ctx->reg, inner);
+    }
+    case NODE_TYPE_ARRAY: {
+        Type* element = resolve_generic_type(ctx, type_node->as.type_array.inner);
+        if (!element) return NULL;
+        Node* size_node = type_node->as.type_array.size_expr;
+        if (!size_node || size_node->type != NODE_INTEGER_LITERAL) {
             errors_push(ctx->errors, SEVERITY_ERROR, type_node->offset,
                         type_node->line, type_node->column,
-                        "'%.*s' is not a generic struct", (int)name_size, name);
+                        "array size must be an integer literal");
             return NULL;
         }
-        NodeList* targs = &type_node->as.type_simple.type_args;
-        size_t type_arg_count = targs->count;
-        Type** type_args = arena_alloc(ctx->arena, sizeof(Type*) * type_arg_count);
-        for (size_t i = 0; i < type_arg_count; i++) {
-            type_args[i] = resolve_type_node(ctx->reg, ctx->errors,
-                                              ctx->mod->symbols, targs->nodes[i]);
-            if (!type_args[i]) return NULL;
+        int arr_size = 0;
+        for (size_t i = 0; i < size_node->as.integer_literal.value_size; i++) {
+            arr_size = arr_size * 10 + (size_node->as.integer_literal.value[i] - '0');
         }
-        Type* t = instantiate_generic_struct(ctx, sym->node, type_args, type_arg_count);
-        type_node->resolved_type = t;
-        return t;
+        return type_array(ctx->reg, element, arr_size);
+    }
+    case NODE_TYPE_SLICE: {
+        Type* element = resolve_generic_type(ctx, type_node->as.type_slice.inner);
+        if (!element) return NULL;
+        return type_slice(ctx->reg, element);
+    }
+    default:
+        break;
     }
     return resolve_type_node(ctx->reg, ctx->errors, ctx->mod->symbols, type_node);
 }

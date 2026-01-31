@@ -1,0 +1,10 @@
+# expect_error: is not a generic struct
+struct Point
+    x: int
+    y: int
+end
+
+func main(): int
+    var p: Point[int] = Point(x = 1, y = 2)
+    return 0
+end

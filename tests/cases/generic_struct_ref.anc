@@ -1,0 +1,10 @@
+# expect: 55
+struct Box[T]
+    value: T
+end
+
+func main(): int
+    var b = Box[int](value = 55)
+    var ref = &b
+    return ref.value
+end

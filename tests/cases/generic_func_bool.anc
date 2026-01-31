@@ -1,0 +1,11 @@
+# expect: 1
+func is_equal[T](a: T, b: T): bool
+    return a == b
+end
+
+func main(): int
+    if is_equal(5, 5)
+        return 1
+    end
+    return 0
+end

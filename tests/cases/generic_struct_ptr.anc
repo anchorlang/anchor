@@ -1,0 +1,11 @@
+# expect: 99
+struct Wrapper[T]
+    data: T
+end
+
+func main(): int
+    var w = Wrapper[int](data = 99)
+    var ptr: *Wrapper[int] = null
+    ptr = &w
+    return ptr.data
+end

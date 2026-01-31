@@ -1,0 +1,13 @@
+# expect: 3
+func identity[T](x: T): T
+    return x
+end
+
+func main(): int
+    var a = identity(3)
+    var b = identity(7.5)
+    if b > 7.0
+        return a
+    end
+    return 0
+end

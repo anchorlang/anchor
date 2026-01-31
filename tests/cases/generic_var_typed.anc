@@ -1,0 +1,9 @@
+# expect: 8
+struct Box[T]
+    value: T
+end
+
+func main(): int
+    var b: Box[int] = Box[int](value = 8)
+    return b.value
+end

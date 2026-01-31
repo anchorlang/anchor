@@ -1,0 +1,10 @@
+# expect: 30
+struct Box[T]
+    value: T
+end
+
+func main(): int
+    var a = Box[int](value = 10)
+    var b = Box[int](value = 20)
+    return a.value + b.value
+end

@@ -1,0 +1,9 @@
+# expect_error: cannot infer type parameter
+func apply[T, U](a: T): U
+    return a
+end
+
+func main(): int
+    var x = apply(5)
+    return 0
+end

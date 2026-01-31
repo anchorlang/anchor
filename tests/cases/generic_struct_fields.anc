@@ -1,0 +1,10 @@
+# expect: 17
+struct Pair[K, V]
+    key: K
+    value: V
+end
+
+func main(): int
+    var p = Pair[int, int](key = 5, value = 12)
+    return p.key + p.value
+end

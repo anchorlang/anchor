@@ -1,0 +1,14 @@
+# expect: 25
+struct Pair[K, V]
+    key: K
+    value: V
+end
+
+func first[T](a: T, b: T): T
+    return a
+end
+
+func main(): int
+    var p = Pair[int, int](key = 25, value = 50)
+    return first(p.key, p.value)
+end
