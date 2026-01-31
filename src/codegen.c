@@ -1090,10 +1090,10 @@ static void emit_h_file(CodeGen* gen) {
         }
     }
 
-    // pass 3a: extern function declarations (unmangled)
+    // pass 3a: exported extern function declarations (unmangled)
     for (Symbol* sym = gen->mod->symbols->first; sym; sym = sym->next) {
         if (sym->kind != SYMBOL_FUNC || !sym->node) continue;
-        if (!sym->node->as.func_decl.is_extern) continue;
+        if (!sym->node->as.func_decl.is_extern || !sym->is_export) continue;
         Type* func_type = get_type(sym->node);
         if (!func_type || func_type->kind != TYPE_FUNC) continue;
         emit_type(gen, f, func_type->as.func_type.return_type);
@@ -1158,6 +1158,27 @@ static void emit_c_file(CodeGen* gen) {
     fprintf(f, "#include <stdbool.h>\n");
     fprintf(f, "#include <stddef.h>\n");
     fprintf(f, "#include <string.h>\n\n");
+
+    // non-exported extern function declarations (unmangled)
+    for (Symbol* sym = gen->mod->symbols->first; sym; sym = sym->next) {
+        if (sym->kind != SYMBOL_FUNC || !sym->node) continue;
+        if (!sym->node->as.func_decl.is_extern || sym->is_export) continue;
+        Type* func_type = get_type(sym->node);
+        if (!func_type || func_type->kind != TYPE_FUNC) continue;
+        emit_type(gen, f, func_type->as.func_type.return_type);
+        fprintf(f, " %.*s(", (int)sym->name_size, sym->name);
+        ParamList* params = &sym->node->as.func_decl.params;
+        if (params->count == 0) {
+            fprintf(f, "void");
+        } else {
+            for (size_t i = 0; i < params->count; i++) {
+                if (i > 0) fprintf(f, ", ");
+                emit_type(gen, f, func_type->as.func_type.param_types[i]);
+                fprintf(f, " %.*s", (int)params->params[i].name_size, params->params[i].name);
+            }
+        }
+        fprintf(f, ");\n");
+    }
 
     // pass 1a: forward declarations for non-exported structs
     for (Symbol* sym = gen->mod->symbols->first; sym; sym = sym->next) {

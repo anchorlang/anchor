@@ -1338,6 +1338,11 @@ static Node* parse_export_declaration(Parser* p) {
     advance(p); // consume EXPORT
     if (check(p, TOKEN_CONST))  return parse_const_decl(p, true);
     if (check(p, TOKEN_VAR))    return parse_var_decl(p, true);
+    if (check(p, TOKEN_EXTERN)) {
+        Node* node = parse_extern_declaration(p);
+        if (node) node->as.func_decl.is_export = true;
+        return node;
+    }
     if (check(p, TOKEN_FUNC))   return parse_func_decl(p, true);
     if (check(p, TOKEN_STRUCT)) return parse_struct_decl(p, true);
     if (check(p, TOKEN_ENUM))   return parse_enum_decl(p, true);
