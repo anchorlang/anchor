@@ -338,9 +338,37 @@ static void resolve_module_types(Arena* arena, Errors* errors,
     }
 }
 
+// forward declarations for CheckContext and resolve_generic_type
+// (needed by resolve_func_types to handle generic types in function signatures)
+typedef struct Scope {
+    struct Scope* parent;
+    SymbolTable locals;
+} Scope;
+
+typedef struct CheckContext {
+    Arena* arena;
+    Errors* errors;
+    TypeRegistry* reg;
+    Module* mod;
+    Scope* scope;
+    Type* return_type;
+    Type* self_type;
+    int loop_depth;
+    int real_loop_depth;
+} CheckContext;
+
+static Type* resolve_generic_type(CheckContext* ctx, Node* type_node);
+
 static void resolve_func_types(Arena* arena, Errors* errors,
                                 TypeRegistry* reg, Module* mod) {
     if (!mod->symbols) return;
+
+    // minimal CheckContext for resolve_generic_type (needed for generic param/return types)
+    CheckContext func_ctx = {0};
+    func_ctx.arena = arena;
+    func_ctx.errors = errors;
+    func_ctx.reg = reg;
+    func_ctx.mod = mod;
 
     for (Symbol* sym = mod->symbols->first; sym; sym = sym->next) {
         if (sym->kind != SYMBOL_FUNC || !sym->node) continue;
@@ -354,13 +382,11 @@ static void resolve_func_types(Arena* arena, Errors* errors,
         if (param_count > 0) {
             param_types = arena_alloc(arena, sizeof(Type*) * param_count);
             for (int i = 0; i < param_count; i++) {
-                param_types[i] = resolve_type_node(reg, errors, mod->symbols,
-                                                    params->params[i].type_node);
+                param_types[i] = resolve_generic_type(&func_ctx, params->params[i].type_node);
             }
         }
 
-        Type* return_type = resolve_type_node(reg, errors, mod->symbols,
-                                               sym->node->as.func_decl.return_type);
+        Type* return_type = resolve_generic_type(&func_ctx, sym->node->as.func_decl.return_type);
 
         Type* func_t = type_func(reg, param_types, param_count, return_type);
         sym->node->resolved_type = func_t;
@@ -370,23 +396,6 @@ static void resolve_func_types(Arena* arena, Errors* errors,
 // ---------------------------------------------------------------------------
 // Pass 4: Expression & statement type checking
 // ---------------------------------------------------------------------------
-
-typedef struct Scope {
-    struct Scope* parent;
-    SymbolTable locals;
-} Scope;
-
-typedef struct CheckContext {
-    Arena* arena;
-    Errors* errors;
-    TypeRegistry* reg;
-    Module* mod;
-    Scope* scope;
-    Type* return_type;
-    Type* self_type;  // non-NULL inside struct methods
-    int loop_depth;      // > 0 inside for/while/match (for break)
-    int real_loop_depth; // > 0 inside for/while only (for continue)
-} CheckContext;
 
 static Scope* scope_push(CheckContext* ctx) {
     Scope* s = arena_alloc(ctx->arena, sizeof(Scope));

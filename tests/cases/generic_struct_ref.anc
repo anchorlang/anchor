@@ -3,8 +3,11 @@ struct Box[T]
     value: T
 end
 
+func read_box(b: &Box[int]): int
+    return b.value
+end
+
 func main(): int
     var b = Box[int](value = 55)
-    var ref = &b
-    return ref.value
+    return read_box(&b)
 end

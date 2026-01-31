@@ -987,13 +987,25 @@ static void emit_h_file(CodeGen* gen) {
     fprintf(f, "} anc__slice;\n");
     fprintf(f, "#endif\n\n");
 
-    // pass 1: exported struct typedefs
+    // pass 1a: forward declarations for exported structs
     for (Symbol* sym = gen->mod->symbols->first; sym; sym = sym->next) {
         if (sym->kind != SYMBOL_STRUCT || !sym->is_export || !sym->node) continue;
-        if (sym->node->as.struct_decl.type_params.count > 0) continue; // skip generic templates
+        if (sym->node->as.struct_decl.type_params.count > 0) continue;
+        fprintf(f, "typedef struct ");
+        emit_mangled(gen, f, sym->node->as.struct_decl.name, sym->node->as.struct_decl.name_size);
+        fprintf(f, " ");
+        emit_mangled(gen, f, sym->node->as.struct_decl.name, sym->node->as.struct_decl.name_size);
+        fprintf(f, ";\n");
+    }
+    fprintf(f, "\n");
+
+    // pass 1b: exported struct bodies
+    for (Symbol* sym = gen->mod->symbols->first; sym; sym = sym->next) {
+        if (sym->kind != SYMBOL_STRUCT || !sym->is_export || !sym->node) continue;
+        if (sym->node->as.struct_decl.type_params.count > 0) continue;
 
         Node* node = sym->node;
-        fprintf(f, "typedef struct ");
+        fprintf(f, "struct ");
         emit_mangled(gen, f, node->as.struct_decl.name, node->as.struct_decl.name_size);
         fprintf(f, " {\n");
 
@@ -1001,19 +1013,12 @@ static void emit_h_file(CodeGen* gen) {
         for (size_t i = 0; i < fields->count; i++) {
             Field* field = &fields->fields[i];
             Type* ft = (Type*)field->type_node->resolved_type;
-            if (!ft) {
-                // resolve on the fly if needed
-                // just use the type_node for now
-            }
             fprintf(f, "    ");
-            // emit field type from type node
             emit_type(gen, f, ft);
             fprintf(f, " %.*s;\n", (int)field->name_size, field->name);
         }
 
-        fprintf(f, "} ");
-        emit_mangled(gen, f, node->as.struct_decl.name, node->as.struct_decl.name_size);
-        fprintf(f, ";\n\n");
+        fprintf(f, "};\n\n");
 
         // exported method declarations
         NodeList* methods = &node->as.struct_decl.methods;
@@ -1118,13 +1123,25 @@ static void emit_c_file(CodeGen* gen) {
     fprintf(f, "#include <stddef.h>\n");
     fprintf(f, "#include <string.h>\n\n");
 
-    // pass 1: non-exported struct typedefs
+    // pass 1a: forward declarations for non-exported structs
     for (Symbol* sym = gen->mod->symbols->first; sym; sym = sym->next) {
         if (sym->kind != SYMBOL_STRUCT || sym->is_export || !sym->node) continue;
-        if (sym->node->as.struct_decl.type_params.count > 0) continue; // skip generic templates
+        if (sym->node->as.struct_decl.type_params.count > 0) continue;
+        fprintf(f, "typedef struct ");
+        emit_mangled(gen, f, sym->node->as.struct_decl.name, sym->node->as.struct_decl.name_size);
+        fprintf(f, " ");
+        emit_mangled(gen, f, sym->node->as.struct_decl.name, sym->node->as.struct_decl.name_size);
+        fprintf(f, ";\n");
+    }
+    fprintf(f, "\n");
+
+    // pass 1b: non-exported struct bodies
+    for (Symbol* sym = gen->mod->symbols->first; sym; sym = sym->next) {
+        if (sym->kind != SYMBOL_STRUCT || sym->is_export || !sym->node) continue;
+        if (sym->node->as.struct_decl.type_params.count > 0) continue;
 
         Node* node = sym->node;
-        fprintf(f, "typedef struct ");
+        fprintf(f, "struct ");
         emit_mangled(gen, f, node->as.struct_decl.name, node->as.struct_decl.name_size);
         fprintf(f, " {\n");
 
@@ -1137,9 +1154,7 @@ static void emit_c_file(CodeGen* gen) {
             fprintf(f, " %.*s;\n", (int)field->name_size, field->name);
         }
 
-        fprintf(f, "} ");
-        emit_mangled(gen, f, node->as.struct_decl.name, node->as.struct_decl.name_size);
-        fprintf(f, ";\n\n");
+        fprintf(f, "};\n\n");
     }
 
     // non-exported enum typedefs

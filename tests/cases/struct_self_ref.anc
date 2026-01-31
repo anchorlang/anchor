@@ -1,0 +1,10 @@
+# expect: 42
+struct Node
+    value: int
+    next: *Node
+end
+
+func main(): int
+    var n = Node(value = 42, next = null)
+    return n.value
+end
