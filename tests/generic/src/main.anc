@@ -1,0 +1,28 @@
+
+struct List[T]
+    ptr: *T
+    len: int
+    cap: int
+end
+
+struct Pair[K, V]
+    key: K
+    value: V
+end
+
+func max[T](a: T, b: T): T
+    if a > b
+        return a
+    end
+    return b
+end
+
+func main(): int
+    var a = max(1, 2)
+    var b = max(1.0, 2.0)
+    var c = max(1.0f, 2.0f)
+
+    var list = List[int](ptr = null, len = 0, cap = 0)
+    var pair = Pair[int, float](key = 0, value = 2.0f)
+    return 0
+end

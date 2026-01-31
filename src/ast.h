@@ -154,6 +154,17 @@ typedef struct EnumVariantList {
     size_t capacity;
 } EnumVariantList;
 
+typedef struct TypeParam {
+    char* name;
+    size_t name_size;
+} TypeParam;
+
+typedef struct TypeParamList {
+    TypeParam* params;
+    size_t count;
+    size_t capacity;
+} TypeParamList;
+
 typedef struct ImportName {
     char* name;
     size_t name_size;
@@ -205,6 +216,7 @@ struct Node {
             bool is_export;
             char* name;
             size_t name_size;
+            TypeParamList type_params;
             ParamList params;
             Node* return_type;
             NodeList body;
@@ -214,6 +226,7 @@ struct Node {
             bool is_export;
             char* name;
             size_t name_size;
+            TypeParamList type_params;
             FieldList fields;
             NodeList methods;
         } struct_decl;
@@ -286,7 +299,7 @@ struct Node {
         struct { TokenType op; Node* left; Node* right; } binary_expr;
         struct { TokenType op; Node* operand; } unary_expr;
         struct { Node* inner; } paren_expr;
-        struct { Node* callee; NodeList args; } call_expr;
+        struct { Node* callee; NodeList type_args; NodeList args; } call_expr;
         struct { Node* object; char* field_name; size_t field_name_size; } field_access;
         struct {
             Node* object;
@@ -297,13 +310,14 @@ struct Node {
         struct {
             char* struct_name;
             size_t struct_name_size;
+            NodeList type_args;
             FieldInitList fields;
         } struct_literal;
         struct { Node* expr; Node* target_type; } cast_expr;
         struct { NodeList elements; } array_literal;
         struct { Node* object; Node* index; } index_expr;
 
-        struct { char* name; size_t name_size; } type_simple;
+        struct { char* name; size_t name_size; NodeList type_args; } type_simple;
         struct { Node* inner; } type_ref;
         struct { Node* inner; } type_ptr;
         struct { Node* inner; Node* size_expr; } type_array;

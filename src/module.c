@@ -34,6 +34,8 @@ static Module* module_graph_add(ModuleGraph* graph) {
     m->impl_pairs.pairs = NULL;
     m->impl_pairs.count = 0;
     m->impl_pairs.capacity = 0;
+    m->generic_insts.first = NULL;
+    m->generic_insts.last = NULL;
     if (!graph->first) {
         graph->first = m;
     } else {

@@ -990,6 +990,7 @@ static void emit_h_file(CodeGen* gen) {
     // pass 1: exported struct typedefs
     for (Symbol* sym = gen->mod->symbols->first; sym; sym = sym->next) {
         if (sym->kind != SYMBOL_STRUCT || !sym->is_export || !sym->node) continue;
+        if (sym->node->as.struct_decl.type_params.count > 0) continue; // skip generic templates
 
         Node* node = sym->node;
         fprintf(f, "typedef struct ");
@@ -1073,6 +1074,7 @@ static void emit_h_file(CodeGen* gen) {
     // pass 3: exported function declarations
     for (Symbol* sym = gen->mod->symbols->first; sym; sym = sym->next) {
         if (sym->kind != SYMBOL_FUNC || !sym->is_export || !sym->node) continue;
+        if (sym->node->as.func_decl.type_params.count > 0) continue; // skip generic templates
         emit_func_signature(gen, f, sym->node, false);
         fprintf(f, ";\n");
     }
@@ -1119,6 +1121,7 @@ static void emit_c_file(CodeGen* gen) {
     // pass 1: non-exported struct typedefs
     for (Symbol* sym = gen->mod->symbols->first; sym; sym = sym->next) {
         if (sym->kind != SYMBOL_STRUCT || sym->is_export || !sym->node) continue;
+        if (sym->node->as.struct_decl.type_params.count > 0) continue; // skip generic templates
 
         Node* node = sym->node;
         fprintf(f, "typedef struct ");
@@ -1173,12 +1176,14 @@ static void emit_c_file(CodeGen* gen) {
     // pass 2: static forward declarations for non-exported functions
     for (Symbol* sym = gen->mod->symbols->first; sym; sym = sym->next) {
         if (sym->kind != SYMBOL_FUNC || sym->is_export || !sym->node) continue;
+        if (sym->node->as.func_decl.type_params.count > 0) continue; // skip generic templates
         emit_func_signature(gen, f, sym->node, true);
         fprintf(f, ";\n");
     }
     // forward declarations for non-exported struct methods
     for (Symbol* sym = gen->mod->symbols->first; sym; sym = sym->next) {
         if (sym->kind != SYMBOL_STRUCT || !sym->node) continue;
+        if (sym->node->as.struct_decl.type_params.count > 0) continue; // skip generic templates
         Node* snode = sym->node;
         bool is_exported_struct = sym->is_export;
         NodeList* methods = &snode->as.struct_decl.methods;
@@ -1240,6 +1245,7 @@ static void emit_c_file(CodeGen* gen) {
     // pass 4: function definitions
     for (Symbol* sym = gen->mod->symbols->first; sym; sym = sym->next) {
         if (sym->kind != SYMBOL_FUNC || !sym->node) continue;
+        if (sym->node->as.func_decl.type_params.count > 0) continue; // skip generic templates
 
         bool is_static = !sym->is_export;
         emit_func_signature(gen, f, sym->node, is_static);
@@ -1253,6 +1259,7 @@ static void emit_c_file(CodeGen* gen) {
     // pass 5: struct method definitions
     for (Symbol* sym = gen->mod->symbols->first; sym; sym = sym->next) {
         if (sym->kind != SYMBOL_STRUCT || !sym->node) continue;
+        if (sym->node->as.struct_decl.type_params.count > 0) continue; // skip generic templates
 
         Node* snode = sym->node;
         bool is_static = !sym->is_export;

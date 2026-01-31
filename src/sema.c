@@ -273,6 +273,9 @@ static void resolve_module_types(Arena* arena, Errors* errors,
 
         switch (sym->kind) {
         case SYMBOL_STRUCT: {
+            // skip generic templates — they are instantiated on demand
+            if (sym->node->as.struct_decl.type_params.count > 0) break;
+
             Type* t = type_struct(reg,
                 sym->node->as.struct_decl.name,
                 sym->node->as.struct_decl.name_size,
@@ -340,6 +343,9 @@ static void resolve_func_types(Arena* arena, Errors* errors,
 
     for (Symbol* sym = mod->symbols->first; sym; sym = sym->next) {
         if (sym->kind != SYMBOL_FUNC || !sym->node) continue;
+
+        // skip generic templates — they are instantiated on demand
+        if (sym->node->as.func_decl.type_params.count > 0) continue;
 
         ParamList* params = &sym->node->as.func_decl.params;
         int param_count = (int)params->count;
@@ -526,6 +532,599 @@ static bool is_lvalue(Node* node) {
 static Type* check_expr(CheckContext* ctx, Node* node);
 static void check_stmt(CheckContext* ctx, Node* node);
 static void check_body(CheckContext* ctx, NodeList* body);
+static void check_func_body(CheckContext* ctx, Node* func_node);
+
+// ---------------------------------------------------------------------------
+// Monomorphization engine for generics
+// ---------------------------------------------------------------------------
+
+typedef struct TypeSubst {
+    char** param_names;
+    size_t* param_name_sizes;
+    Type** concrete_types;
+    size_t count;
+} TypeSubst;
+
+static Type* subst_lookup(TypeSubst* subst, char* name, size_t name_size) {
+    for (size_t i = 0; i < subst->count; i++) {
+        if (subst->param_name_sizes[i] == name_size &&
+            memcmp(subst->param_names[i], name, name_size) == 0) {
+            return subst->concrete_types[i];
+        }
+    }
+    return NULL;
+}
+
+// Build mangled name: "max" + [int] -> "max__int", "Pair" + [int, float] -> "Pair__int__float"
+static char* build_mangled_name(Arena* arena, char* base, size_t base_size,
+                                 Type** type_args, size_t type_arg_count, size_t* out_size) {
+    // estimate size
+    size_t total = base_size;
+    for (size_t i = 0; i < type_arg_count; i++) {
+        total += 2 + strlen(type_name(type_args[i])); // "__" + type name
+    }
+    char* buf = arena_alloc(arena, total + 1);
+    size_t pos = 0;
+    memcpy(buf + pos, base, base_size);
+    pos += base_size;
+    for (size_t i = 0; i < type_arg_count; i++) {
+        buf[pos++] = '_';
+        buf[pos++] = '_';
+        const char* tname = type_name(type_args[i]);
+        size_t tlen = strlen(tname);
+        memcpy(buf + pos, tname, tlen);
+        pos += tlen;
+    }
+    buf[pos] = '\0';
+    *out_size = pos;
+    return buf;
+}
+
+// Find an existing generic instantiation for the same template + type args
+static GenericInst* find_generic_inst(Module* mod, Node* template_decl,
+                                       Type** type_args, size_t type_arg_count) {
+    for (GenericInst* inst = mod->generic_insts.first; inst; inst = inst->next) {
+        if (inst->template_decl != template_decl) continue;
+        if (inst->type_arg_count != type_arg_count) continue;
+        bool match = true;
+        for (size_t i = 0; i < type_arg_count; i++) {
+            if (!type_equals(inst->type_args[i], type_args[i])) {
+                match = false;
+                break;
+            }
+        }
+        if (match) return inst;
+    }
+    return NULL;
+}
+
+static void generic_inst_add(Arena* arena, Module* mod, GenericInst* inst) {
+    inst->next = NULL;
+    if (!mod->generic_insts.first) {
+        mod->generic_insts.first = inst;
+    } else {
+        mod->generic_insts.last->next = inst;
+    }
+    mod->generic_insts.last = inst;
+}
+
+// Deep-copy an AST node, substituting type parameter names with concrete types
+static Node* deep_copy_node(Arena* arena, Node* src, TypeSubst* subst);
+
+static NodeList deep_copy_node_list(Arena* arena, NodeList* src, TypeSubst* subst) {
+    NodeList dst = {0};
+    for (size_t i = 0; i < src->count; i++) {
+        Node* copy = deep_copy_node(arena, src->nodes[i], subst);
+        if (copy) {
+            if (dst.count >= dst.capacity) {
+                size_t new_cap = dst.capacity < 8 ? 8 : dst.capacity * 2;
+                Node** new_nodes = arena_alloc(arena, new_cap * sizeof(Node*));
+                if (dst.nodes) memcpy(new_nodes, dst.nodes, dst.count * sizeof(Node*));
+                dst.nodes = new_nodes;
+                dst.capacity = new_cap;
+            }
+            dst.nodes[dst.count++] = copy;
+        }
+    }
+    return dst;
+}
+
+static FieldList deep_copy_field_list(Arena* arena, FieldList* src, TypeSubst* subst) {
+    FieldList dst = {0};
+    if (src->count == 0) return dst;
+    dst.fields = arena_alloc(arena, src->count * sizeof(Field));
+    dst.count = src->count;
+    dst.capacity = src->count;
+    for (size_t i = 0; i < src->count; i++) {
+        dst.fields[i] = src->fields[i];
+        dst.fields[i].type_node = deep_copy_node(arena, src->fields[i].type_node, subst);
+    }
+    return dst;
+}
+
+static ParamList deep_copy_param_list(Arena* arena, ParamList* src, TypeSubst* subst) {
+    ParamList dst = {0};
+    if (src->count == 0) return dst;
+    dst.params = arena_alloc(arena, src->count * sizeof(Param));
+    dst.count = src->count;
+    dst.capacity = src->count;
+    for (size_t i = 0; i < src->count; i++) {
+        dst.params[i] = src->params[i];
+        dst.params[i].type_node = deep_copy_node(arena, src->params[i].type_node, subst);
+    }
+    return dst;
+}
+
+static FieldInitList deep_copy_field_init_list(Arena* arena, FieldInitList* src, TypeSubst* subst) {
+    FieldInitList dst = {0};
+    if (src->count == 0) return dst;
+    dst.inits = arena_alloc(arena, src->count * sizeof(FieldInit));
+    dst.count = src->count;
+    dst.capacity = src->count;
+    for (size_t i = 0; i < src->count; i++) {
+        dst.inits[i] = src->inits[i];
+        dst.inits[i].value = deep_copy_node(arena, src->inits[i].value, subst);
+    }
+    return dst;
+}
+
+static ElseIfList deep_copy_elseif_list(Arena* arena, ElseIfList* src, TypeSubst* subst) {
+    ElseIfList dst = {0};
+    if (src->count == 0) return dst;
+    dst.branches = arena_alloc(arena, src->count * sizeof(ElseIfBranch));
+    dst.count = src->count;
+    dst.capacity = src->count;
+    for (size_t i = 0; i < src->count; i++) {
+        dst.branches[i] = src->branches[i];
+        dst.branches[i].condition = deep_copy_node(arena, src->branches[i].condition, subst);
+        dst.branches[i].body = deep_copy_node_list(arena, &src->branches[i].body, subst);
+    }
+    return dst;
+}
+
+static MatchCaseList deep_copy_match_case_list(Arena* arena, MatchCaseList* src, TypeSubst* subst) {
+    MatchCaseList dst = {0};
+    if (src->count == 0) return dst;
+    dst.cases = arena_alloc(arena, src->count * sizeof(MatchCase));
+    dst.count = src->count;
+    dst.capacity = src->count;
+    for (size_t i = 0; i < src->count; i++) {
+        dst.cases[i] = src->cases[i];
+        dst.cases[i].values = deep_copy_node_list(arena, &src->cases[i].values, subst);
+        dst.cases[i].body = deep_copy_node_list(arena, &src->cases[i].body, subst);
+    }
+    return dst;
+}
+
+static Node* deep_copy_node(Arena* arena, Node* src, TypeSubst* subst) {
+    if (!src) return NULL;
+    Node* dst = arena_alloc(arena, sizeof(Node));
+    *dst = *src; // shallow copy first
+    dst->resolved_type = NULL; // clear — will be re-resolved
+
+    switch (src->type) {
+    // Type nodes — this is where substitution happens
+    case NODE_TYPE_SIMPLE: {
+        // Check if this type name is a type parameter
+        Type* concrete = subst_lookup(subst, src->as.type_simple.name, src->as.type_simple.name_size);
+        if (concrete) {
+            // Replace with a concrete type node
+            // We keep it as NODE_TYPE_SIMPLE but change the name to the concrete type's name
+            const char* cname = type_name(concrete);
+            size_t clen = strlen(cname);
+            char* name_copy = arena_alloc(arena, clen);
+            memcpy(name_copy, cname, clen);
+            dst->as.type_simple.name = name_copy;
+            dst->as.type_simple.name_size = clen;
+            // Pre-resolve it so resolve_type_node finds it
+            dst->resolved_type = concrete;
+        }
+        break;
+    }
+    case NODE_TYPE_REFERENCE:
+        dst->as.type_ref.inner = deep_copy_node(arena, src->as.type_ref.inner, subst);
+        break;
+    case NODE_TYPE_POINTER:
+        dst->as.type_ptr.inner = deep_copy_node(arena, src->as.type_ptr.inner, subst);
+        break;
+    case NODE_TYPE_ARRAY:
+        dst->as.type_array.inner = deep_copy_node(arena, src->as.type_array.inner, subst);
+        dst->as.type_array.size_expr = deep_copy_node(arena, src->as.type_array.size_expr, subst);
+        break;
+    case NODE_TYPE_SLICE:
+        dst->as.type_slice.inner = deep_copy_node(arena, src->as.type_slice.inner, subst);
+        break;
+
+    // Declaration nodes
+    case NODE_FUNC_DECL:
+        dst->as.func_decl.type_params.count = 0; // no longer generic
+        dst->as.func_decl.type_params.params = NULL;
+        dst->as.func_decl.params = deep_copy_param_list(arena, &src->as.func_decl.params, subst);
+        dst->as.func_decl.return_type = deep_copy_node(arena, src->as.func_decl.return_type, subst);
+        dst->as.func_decl.body = deep_copy_node_list(arena, &src->as.func_decl.body, subst);
+        break;
+    case NODE_STRUCT_DECL:
+        dst->as.struct_decl.type_params.count = 0; // no longer generic
+        dst->as.struct_decl.type_params.params = NULL;
+        dst->as.struct_decl.fields = deep_copy_field_list(arena, &src->as.struct_decl.fields, subst);
+        dst->as.struct_decl.methods = deep_copy_node_list(arena, &src->as.struct_decl.methods, subst);
+        break;
+
+    // Statement nodes
+    case NODE_RETURN_STMT:
+        dst->as.return_stmt.value = deep_copy_node(arena, src->as.return_stmt.value, subst);
+        break;
+    case NODE_IF_STMT:
+        dst->as.if_stmt.condition = deep_copy_node(arena, src->as.if_stmt.condition, subst);
+        dst->as.if_stmt.then_body = deep_copy_node_list(arena, &src->as.if_stmt.then_body, subst);
+        dst->as.if_stmt.elseifs = deep_copy_elseif_list(arena, &src->as.if_stmt.elseifs, subst);
+        dst->as.if_stmt.else_body = deep_copy_node_list(arena, &src->as.if_stmt.else_body, subst);
+        break;
+    case NODE_FOR_STMT:
+        dst->as.for_stmt.start = deep_copy_node(arena, src->as.for_stmt.start, subst);
+        dst->as.for_stmt.end = deep_copy_node(arena, src->as.for_stmt.end, subst);
+        dst->as.for_stmt.step = deep_copy_node(arena, src->as.for_stmt.step, subst);
+        dst->as.for_stmt.body = deep_copy_node_list(arena, &src->as.for_stmt.body, subst);
+        break;
+    case NODE_WHILE_STMT:
+        dst->as.while_stmt.condition = deep_copy_node(arena, src->as.while_stmt.condition, subst);
+        dst->as.while_stmt.body = deep_copy_node_list(arena, &src->as.while_stmt.body, subst);
+        break;
+    case NODE_MATCH_STMT:
+        dst->as.match_stmt.subject = deep_copy_node(arena, src->as.match_stmt.subject, subst);
+        dst->as.match_stmt.cases = deep_copy_match_case_list(arena, &src->as.match_stmt.cases, subst);
+        dst->as.match_stmt.else_body = deep_copy_node_list(arena, &src->as.match_stmt.else_body, subst);
+        break;
+    case NODE_ASSIGN_STMT:
+        dst->as.assign_stmt.target = deep_copy_node(arena, src->as.assign_stmt.target, subst);
+        dst->as.assign_stmt.value = deep_copy_node(arena, src->as.assign_stmt.value, subst);
+        break;
+    case NODE_COMPOUND_ASSIGN_STMT:
+        dst->as.compound_assign_stmt.target = deep_copy_node(arena, src->as.compound_assign_stmt.target, subst);
+        dst->as.compound_assign_stmt.value = deep_copy_node(arena, src->as.compound_assign_stmt.value, subst);
+        break;
+    case NODE_EXPR_STMT:
+        dst->as.expr_stmt.expr = deep_copy_node(arena, src->as.expr_stmt.expr, subst);
+        break;
+    case NODE_VAR_DECL:
+        dst->as.var_decl.type_node = deep_copy_node(arena, src->as.var_decl.type_node, subst);
+        dst->as.var_decl.value = deep_copy_node(arena, src->as.var_decl.value, subst);
+        break;
+    case NODE_CONST_DECL:
+        dst->as.const_decl.type_node = deep_copy_node(arena, src->as.const_decl.type_node, subst);
+        dst->as.const_decl.value = deep_copy_node(arena, src->as.const_decl.value, subst);
+        break;
+
+    // Expression nodes
+    case NODE_BINARY_EXPR:
+        dst->as.binary_expr.left = deep_copy_node(arena, src->as.binary_expr.left, subst);
+        dst->as.binary_expr.right = deep_copy_node(arena, src->as.binary_expr.right, subst);
+        break;
+    case NODE_UNARY_EXPR:
+        dst->as.unary_expr.operand = deep_copy_node(arena, src->as.unary_expr.operand, subst);
+        break;
+    case NODE_PAREN_EXPR:
+        dst->as.paren_expr.inner = deep_copy_node(arena, src->as.paren_expr.inner, subst);
+        break;
+    case NODE_CALL_EXPR:
+        dst->as.call_expr.callee = deep_copy_node(arena, src->as.call_expr.callee, subst);
+        dst->as.call_expr.args = deep_copy_node_list(arena, &src->as.call_expr.args, subst);
+        dst->as.call_expr.type_args = deep_copy_node_list(arena, &src->as.call_expr.type_args, subst);
+        break;
+    case NODE_FIELD_ACCESS:
+        dst->as.field_access.object = deep_copy_node(arena, src->as.field_access.object, subst);
+        break;
+    case NODE_METHOD_CALL:
+        dst->as.method_call.object = deep_copy_node(arena, src->as.method_call.object, subst);
+        dst->as.method_call.args = deep_copy_node_list(arena, &src->as.method_call.args, subst);
+        break;
+    case NODE_STRUCT_LITERAL:
+        dst->as.struct_literal.fields = deep_copy_field_init_list(arena, &src->as.struct_literal.fields, subst);
+        dst->as.struct_literal.type_args = deep_copy_node_list(arena, &src->as.struct_literal.type_args, subst);
+        break;
+    case NODE_CAST_EXPR:
+        dst->as.cast_expr.expr = deep_copy_node(arena, src->as.cast_expr.expr, subst);
+        dst->as.cast_expr.target_type = deep_copy_node(arena, src->as.cast_expr.target_type, subst);
+        break;
+    case NODE_ARRAY_LITERAL:
+        dst->as.array_literal.elements = deep_copy_node_list(arena, &src->as.array_literal.elements, subst);
+        break;
+    case NODE_INDEX_EXPR:
+        dst->as.index_expr.object = deep_copy_node(arena, src->as.index_expr.object, subst);
+        dst->as.index_expr.index = deep_copy_node(arena, src->as.index_expr.index, subst);
+        break;
+
+    // Leaf nodes — no children to copy
+    case NODE_INTEGER_LITERAL:
+    case NODE_FLOAT_LITERAL:
+    case NODE_STRING_LITERAL:
+    case NODE_BOOL_LITERAL:
+    case NODE_NULL_LITERAL:
+    case NODE_IDENTIFIER:
+    case NODE_SELF:
+    case NODE_BREAK_STMT:
+    case NODE_CONTINUE_STMT:
+        break;
+
+    default:
+        break;
+    }
+
+    return dst;
+}
+
+// Build a TypeSubst from template type params and concrete type args
+static TypeSubst build_subst(Arena* arena, TypeParamList* params, Type** type_args, size_t type_arg_count) {
+    TypeSubst subst;
+    subst.count = params->count;
+    subst.param_names = arena_alloc(arena, sizeof(char*) * subst.count);
+    subst.param_name_sizes = arena_alloc(arena, sizeof(size_t) * subst.count);
+    subst.concrete_types = arena_alloc(arena, sizeof(Type*) * subst.count);
+    for (size_t i = 0; i < subst.count; i++) {
+        subst.param_names[i] = params->params[i].name;
+        subst.param_name_sizes[i] = params->params[i].name_size;
+        subst.concrete_types[i] = (i < type_arg_count) ? type_args[i] : NULL;
+    }
+    return subst;
+}
+
+// Instantiate a generic struct with concrete type arguments.
+// Returns the resolved Type* for the instantiation.
+static Type* instantiate_generic_struct(CheckContext* ctx, Node* template_decl,
+                                         Type** type_args, size_t type_arg_count) {
+    TypeParamList* params = &template_decl->as.struct_decl.type_params;
+    if (type_arg_count != params->count) {
+        errors_push(ctx->errors, SEVERITY_ERROR, template_decl->offset,
+                    template_decl->line, template_decl->column,
+                    "generic struct '%.*s' expects %d type arguments, got %d",
+                    (int)template_decl->as.struct_decl.name_size,
+                    template_decl->as.struct_decl.name,
+                    (int)params->count, (int)type_arg_count);
+        return NULL;
+    }
+
+    // dedup
+    GenericInst* existing = find_generic_inst(ctx->mod, template_decl, type_args, type_arg_count);
+    if (existing) return existing->resolved_type;
+
+    // build substitution and mangled name
+    TypeSubst subst = build_subst(ctx->arena, params, type_args, type_arg_count);
+    size_t mangled_size;
+    char* mangled = build_mangled_name(ctx->arena,
+        template_decl->as.struct_decl.name,
+        template_decl->as.struct_decl.name_size,
+        type_args, type_arg_count, &mangled_size);
+
+    // deep-copy the template
+    Node* mono = deep_copy_node(ctx->arena, template_decl, &subst);
+    mono->as.struct_decl.name = mangled;
+    mono->as.struct_decl.name_size = mangled_size;
+
+    // create the struct type
+    Type* t = type_struct(ctx->reg, mangled, mangled_size, ctx->mod,
+                           &mono->as.struct_decl.fields, &mono->as.struct_decl.methods);
+    mono->resolved_type = t;
+
+    // resolve field types
+    FieldList* fields = &mono->as.struct_decl.fields;
+    for (size_t i = 0; i < fields->count; i++) {
+        if (fields->fields[i].type_node) {
+            Type* ft = (Type*)fields->fields[i].type_node->resolved_type;
+            if (!ft) {
+                ft = resolve_type_node(ctx->reg, ctx->errors, ctx->mod->symbols,
+                                        fields->fields[i].type_node);
+                fields->fields[i].type_node->resolved_type = ft;
+            }
+        }
+    }
+
+    // register the instantiation
+    GenericInst* inst = arena_alloc(ctx->arena, sizeof(GenericInst));
+    inst->next = NULL;
+    inst->template_decl = template_decl;
+    inst->type_args = arena_alloc(ctx->arena, sizeof(Type*) * type_arg_count);
+    memcpy(inst->type_args, type_args, sizeof(Type*) * type_arg_count);
+    inst->type_arg_count = type_arg_count;
+    inst->mangled_name = mangled;
+    inst->mangled_name_size = mangled_size;
+    inst->mono_decl = mono;
+    inst->resolved_type = t;
+    generic_inst_add(ctx->arena, ctx->mod, inst);
+
+    // add a symbol for the monomorphized struct so codegen can find it
+    symbol_add(ctx->arena, ctx->mod->symbols, SYMBOL_STRUCT, mangled, mangled_size,
+               template_decl->as.struct_decl.is_export, mono);
+
+    return t;
+}
+
+// Instantiate a generic function with concrete type arguments.
+// Returns the resolved Type* for the instantiation.
+static Type* instantiate_generic_func(CheckContext* ctx, Node* template_decl,
+                                       Type** type_args, size_t type_arg_count) {
+    TypeParamList* params = &template_decl->as.func_decl.type_params;
+    if (type_arg_count != params->count) {
+        errors_push(ctx->errors, SEVERITY_ERROR, template_decl->offset,
+                    template_decl->line, template_decl->column,
+                    "generic function '%.*s' expects %d type arguments, got %d",
+                    (int)template_decl->as.func_decl.name_size,
+                    template_decl->as.func_decl.name,
+                    (int)params->count, (int)type_arg_count);
+        return NULL;
+    }
+
+    // dedup
+    GenericInst* existing = find_generic_inst(ctx->mod, template_decl, type_args, type_arg_count);
+    if (existing) return existing->resolved_type;
+
+    // build substitution and mangled name
+    TypeSubst subst = build_subst(ctx->arena, params, type_args, type_arg_count);
+    size_t mangled_size;
+    char* mangled = build_mangled_name(ctx->arena,
+        template_decl->as.func_decl.name,
+        template_decl->as.func_decl.name_size,
+        type_args, type_arg_count, &mangled_size);
+
+    // deep-copy the template
+    Node* mono = deep_copy_node(ctx->arena, template_decl, &subst);
+    mono->as.func_decl.name = mangled;
+    mono->as.func_decl.name_size = mangled_size;
+
+    // resolve function type
+    ParamList* mono_params = &mono->as.func_decl.params;
+    int param_count = (int)mono_params->count;
+    Type** param_types = NULL;
+    if (param_count > 0) {
+        param_types = arena_alloc(ctx->arena, sizeof(Type*) * param_count);
+        for (int i = 0; i < param_count; i++) {
+            Type* pt = (Type*)mono_params->params[i].type_node->resolved_type;
+            if (!pt) {
+                pt = resolve_type_node(ctx->reg, ctx->errors, ctx->mod->symbols,
+                                        mono_params->params[i].type_node);
+            }
+            param_types[i] = pt;
+        }
+    }
+    Type* ret = NULL;
+    if (mono->as.func_decl.return_type) {
+        ret = (Type*)mono->as.func_decl.return_type->resolved_type;
+        if (!ret) {
+            ret = resolve_type_node(ctx->reg, ctx->errors, ctx->mod->symbols,
+                                     mono->as.func_decl.return_type);
+        }
+    } else {
+        ret = type_void(ctx->reg);
+    }
+
+    Type* func_t = type_func(ctx->reg, param_types, param_count, ret);
+    mono->resolved_type = func_t;
+
+    // register the instantiation
+    GenericInst* inst = arena_alloc(ctx->arena, sizeof(GenericInst));
+    inst->next = NULL;
+    inst->template_decl = template_decl;
+    inst->type_args = arena_alloc(ctx->arena, sizeof(Type*) * type_arg_count);
+    memcpy(inst->type_args, type_args, sizeof(Type*) * type_arg_count);
+    inst->type_arg_count = type_arg_count;
+    inst->mangled_name = mangled;
+    inst->mangled_name_size = mangled_size;
+    inst->mono_decl = mono;
+    inst->resolved_type = func_t;
+    generic_inst_add(ctx->arena, ctx->mod, inst);
+
+    // add a symbol for the monomorphized function
+    symbol_add(ctx->arena, ctx->mod->symbols, SYMBOL_FUNC, mangled, mangled_size,
+               template_decl->as.func_decl.is_export, mono);
+
+    // type-check the monomorphized body
+    check_func_body(ctx, mono);
+
+    return func_t;
+}
+
+// Infer type arguments for a generic function from call arguments.
+// Returns an arena-allocated array of Type*, or NULL on failure.
+static Type** infer_type_args(CheckContext* ctx, Node* template_decl,
+                               NodeList* call_args, size_t* out_count) {
+    TypeParamList* type_params = &template_decl->as.func_decl.type_params;
+    size_t param_count = type_params->count;
+    *out_count = param_count;
+
+    Type** inferred = arena_alloc(ctx->arena, sizeof(Type*) * param_count);
+    for (size_t i = 0; i < param_count; i++) inferred[i] = NULL;
+
+    // match each function param's type node against the argument's resolved type
+    ParamList* func_params = &template_decl->as.func_decl.params;
+    for (size_t i = 0; i < func_params->count && i < call_args->count; i++) {
+        Type* arg_type = (Type*)call_args->nodes[i]->resolved_type;
+        if (!arg_type) continue;
+        Node* param_type_node = func_params->params[i].type_node;
+        if (!param_type_node) continue;
+
+        // if param type is a simple name matching a type param, bind it
+        if (param_type_node->type == NODE_TYPE_SIMPLE) {
+            for (size_t j = 0; j < param_count; j++) {
+                if (type_params->params[j].name_size == param_type_node->as.type_simple.name_size &&
+                    memcmp(type_params->params[j].name, param_type_node->as.type_simple.name,
+                           param_type_node->as.type_simple.name_size) == 0) {
+                    if (!inferred[j]) {
+                        inferred[j] = arg_type;
+                    }
+                    break;
+                }
+            }
+        }
+        // if param type is *T, and arg is *X, infer T=X
+        if (param_type_node->type == NODE_TYPE_POINTER && arg_type->kind == TYPE_PTR) {
+            Node* inner = param_type_node->as.type_ptr.inner;
+            if (inner && inner->type == NODE_TYPE_SIMPLE) {
+                for (size_t j = 0; j < param_count; j++) {
+                    if (type_params->params[j].name_size == inner->as.type_simple.name_size &&
+                        memcmp(type_params->params[j].name, inner->as.type_simple.name,
+                               inner->as.type_simple.name_size) == 0) {
+                        if (!inferred[j]) inferred[j] = arg_type->as.ptr_type.inner;
+                        break;
+                    }
+                }
+            }
+        }
+        // if param type is &T, and arg is &X, infer T=X
+        if (param_type_node->type == NODE_TYPE_REFERENCE && arg_type->kind == TYPE_REF) {
+            Node* inner = param_type_node->as.type_ref.inner;
+            if (inner && inner->type == NODE_TYPE_SIMPLE) {
+                for (size_t j = 0; j < param_count; j++) {
+                    if (type_params->params[j].name_size == inner->as.type_simple.name_size &&
+                        memcmp(type_params->params[j].name, inner->as.type_simple.name,
+                               inner->as.type_simple.name_size) == 0) {
+                        if (!inferred[j]) inferred[j] = arg_type->as.ref_type.inner;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    // check all params were inferred
+    for (size_t i = 0; i < param_count; i++) {
+        if (!inferred[i]) {
+            errors_push(ctx->errors, SEVERITY_ERROR,
+                        template_decl->offset, template_decl->line, template_decl->column,
+                        "cannot infer type parameter '%.*s'",
+                        (int)type_params->params[i].name_size, type_params->params[i].name);
+            return NULL;
+        }
+    }
+    return inferred;
+}
+
+// resolve_type_node wrapper that handles generic type args (e.g. List[int])
+static Type* resolve_generic_type(CheckContext* ctx, Node* type_node) {
+    if (!type_node) return type_void(ctx->reg);
+    if (type_node->type == NODE_TYPE_SIMPLE && type_node->as.type_simple.type_args.count > 0) {
+        char* name = type_node->as.type_simple.name;
+        size_t name_size = type_node->as.type_simple.name_size;
+        Symbol* sym = symbol_find(ctx->mod->symbols, name, name_size);
+        if (!sym || sym->kind != SYMBOL_STRUCT || !sym->node ||
+            sym->node->as.struct_decl.type_params.count == 0) {
+            errors_push(ctx->errors, SEVERITY_ERROR, type_node->offset,
+                        type_node->line, type_node->column,
+                        "'%.*s' is not a generic struct", (int)name_size, name);
+            return NULL;
+        }
+        NodeList* targs = &type_node->as.type_simple.type_args;
+        size_t type_arg_count = targs->count;
+        Type** type_args = arena_alloc(ctx->arena, sizeof(Type*) * type_arg_count);
+        for (size_t i = 0; i < type_arg_count; i++) {
+            type_args[i] = resolve_type_node(ctx->reg, ctx->errors,
+                                              ctx->mod->symbols, targs->nodes[i]);
+            if (!type_args[i]) return NULL;
+        }
+        Type* t = instantiate_generic_struct(ctx, sym->node, type_args, type_arg_count);
+        type_node->resolved_type = t;
+        return t;
+    }
+    return resolve_type_node(ctx->reg, ctx->errors, ctx->mod->symbols, type_node);
+}
 
 static Type* check_expr(CheckContext* ctx, Node* node) {
     if (!node) return NULL;
@@ -691,6 +1290,52 @@ static Type* check_expr(CheckContext* ctx, Node* node) {
                             (int)callee->as.identifier.name_size, callee->as.identifier.name);
                 break;
             }
+
+            // Handle generic function calls
+            if (sym->kind == SYMBOL_FUNC && sym->node &&
+                sym->node->as.func_decl.type_params.count > 0) {
+                NodeList* explicit_type_args = &node->as.call_expr.type_args;
+                NodeList* call_args = &node->as.call_expr.args;
+
+                // Type-check arguments first (needed for inference)
+                for (size_t i = 0; i < call_args->count; i++) {
+                    check_expr(ctx, call_args->nodes[i]);
+                }
+
+                Type** type_args = NULL;
+                size_t type_arg_count = 0;
+
+                if (explicit_type_args->count > 0) {
+                    // Explicit type args: max[int](1, 2)
+                    type_arg_count = explicit_type_args->count;
+                    type_args = arena_alloc(ctx->arena, sizeof(Type*) * type_arg_count);
+                    for (size_t i = 0; i < type_arg_count; i++) {
+                        type_args[i] = resolve_type_node(ctx->reg, ctx->errors,
+                                                          ctx->mod->symbols,
+                                                          explicit_type_args->nodes[i]);
+                    }
+                } else {
+                    // Infer type args from arguments: max(1, 2) -> T=int
+                    type_args = infer_type_args(ctx, sym->node, call_args, &type_arg_count);
+                }
+
+                if (!type_args) break;
+
+                callee_type = instantiate_generic_func(ctx, sym->node, type_args, type_arg_count);
+                if (!callee_type) break;
+
+                // Update callee to point to the monomorphized function
+                GenericInst* inst = find_generic_inst(ctx->mod, sym->node, type_args, type_arg_count);
+                if (inst) {
+                    callee->as.identifier.name = inst->mangled_name;
+                    callee->as.identifier.name_size = inst->mangled_name_size;
+                }
+                callee->resolved_type = callee_type;
+
+                result = callee_type->as.func_type.return_type;
+                break;
+            }
+
             callee_type = get_symbol_type(sym);
             callee->resolved_type = callee_type;
         } else {
@@ -945,7 +1590,34 @@ static Type* check_expr(CheckContext* ctx, Node* node) {
                         "undefined struct '%.*s'", (int)name_size, name);
             break;
         }
-        Type* st = get_symbol_type(sym);
+
+        // Handle generic struct instantiation: Pair[int, float](...)
+        Type* st = NULL;
+        NodeList* type_args_list = &node->as.struct_literal.type_args;
+        if (type_args_list->count > 0 && sym->kind == SYMBOL_STRUCT && sym->node &&
+            sym->node->as.struct_decl.type_params.count > 0) {
+            size_t type_arg_count = type_args_list->count;
+            Type** type_args = arena_alloc(ctx->arena, sizeof(Type*) * type_arg_count);
+            for (size_t i = 0; i < type_arg_count; i++) {
+                type_args[i] = resolve_type_node(ctx->reg, ctx->errors,
+                                                  ctx->mod->symbols,
+                                                  type_args_list->nodes[i]);
+                if (!type_args[i]) { st = NULL; break; }
+            }
+            if (type_args[0]) {
+                st = instantiate_generic_struct(ctx, sym->node, type_args, type_arg_count);
+            }
+            if (!st) break;
+            // Update the node's struct_name to the mangled name so codegen works
+            GenericInst* inst = find_generic_inst(ctx->mod, sym->node, type_args, type_arg_count);
+            if (inst) {
+                node->as.struct_literal.struct_name = inst->mangled_name;
+                node->as.struct_literal.struct_name_size = inst->mangled_name_size;
+            }
+        } else {
+            st = get_symbol_type(sym);
+        }
+
         if (!st || st->kind != TYPE_STRUCT) {
             errors_push(ctx->errors, SEVERITY_ERROR, node->offset, node->line, node->column,
                         "'%.*s' is not a struct", (int)name_size, name);
@@ -968,10 +1640,18 @@ static Type* check_expr(CheckContext* ctx, Node* node) {
                         Type* field_type = resolve_type_node(ctx->reg, ctx->errors,
                                                               ctx->mod->symbols, f->type_node);
                         if (field_type && !type_equals(val_type, field_type)) {
-                            errors_push(ctx->errors, SEVERITY_ERROR, fi->offset, fi->line, fi->column,
-                                        "field '%.*s': expected '%s', got '%s'",
-                                        (int)fi->name_size, fi->name,
-                                        type_name(field_type), type_name(val_type));
+                            // allow *void (null) where any pointer is expected
+                            bool compatible = false;
+                            if (val_type->kind == TYPE_PTR && val_type->as.ptr_type.inner->kind == TYPE_VOID &&
+                                field_type->kind == TYPE_PTR) {
+                                compatible = true;
+                            }
+                            if (!compatible) {
+                                errors_push(ctx->errors, SEVERITY_ERROR, fi->offset, fi->line, fi->column,
+                                            "field '%.*s': expected '%s', got '%s'",
+                                            (int)fi->name_size, fi->name,
+                                            type_name(field_type), type_name(val_type));
+                            }
                         }
                     }
                     break;
@@ -1068,8 +1748,7 @@ static void check_stmt(CheckContext* ctx, Node* node) {
     case NODE_VAR_DECL: {
         Type* declared_type = NULL;
         if (node->as.var_decl.type_node) {
-            declared_type = resolve_type_node(ctx->reg, ctx->errors,
-                                              ctx->mod->symbols, node->as.var_decl.type_node);
+            declared_type = resolve_generic_type(ctx, node->as.var_decl.type_node);
         }
         Type* init_type = NULL;
         if (node->as.var_decl.value) {
@@ -1149,8 +1828,7 @@ static void check_stmt(CheckContext* ctx, Node* node) {
     case NODE_CONST_DECL: {
         Type* declared_type = NULL;
         if (node->as.const_decl.type_node) {
-            declared_type = resolve_type_node(ctx->reg, ctx->errors,
-                                              ctx->mod->symbols, node->as.const_decl.type_node);
+            declared_type = resolve_generic_type(ctx, node->as.const_decl.type_node);
         }
         Type* init_type = NULL;
         if (node->as.const_decl.value) {
@@ -1562,9 +2240,11 @@ static void check_module_bodies(Arena* arena, Errors* errors, TypeRegistry* reg,
 
         switch (sym->kind) {
         case SYMBOL_FUNC:
+            if (sym->node->as.func_decl.type_params.count > 0) break;
             check_func_body(&ctx, sym->node);
             break;
         case SYMBOL_STRUCT:
+            if (sym->node->as.struct_decl.type_params.count > 0) break;
             check_struct_methods(&ctx, sym->node);
             break;
         case SYMBOL_VAR:

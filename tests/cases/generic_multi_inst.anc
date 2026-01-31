@@ -1,0 +1,16 @@
+# expect: 1
+func min[T](a: T, b: T): T
+    if a < b
+        return a
+    end
+    return b
+end
+
+func main(): int
+    var a = min(3, 1)
+    var b = min(5.0, 2.0)
+    if b > 1.5
+        return a
+    end
+    return 0
+end

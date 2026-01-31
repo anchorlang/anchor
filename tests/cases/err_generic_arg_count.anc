@@ -1,0 +1,10 @@
+# expect_error: expects 2 type arguments
+struct Pair[K, V]
+    key: K
+    value: V
+end
+
+func main(): int
+    var p = Pair[int](key = 1, value = 2)
+    return 0
+end

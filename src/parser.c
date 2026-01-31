@@ -172,6 +172,19 @@ static void elseif_list_push(Arena* arena, ElseIfList* list, ElseIfBranch branch
     list->branches[list->count++] = branch;
 }
 
+static void type_param_list_push(Arena* arena, TypeParamList* list, TypeParam param) {
+    if (list->count >= list->capacity) {
+        size_t new_cap = list->capacity < 8 ? 8 : list->capacity * 2;
+        TypeParam* new_params = arena_alloc(arena, new_cap * sizeof(TypeParam));
+        if (list->params) {
+            memcpy(new_params, list->params, list->count * sizeof(TypeParam));
+        }
+        list->params = new_params;
+        list->capacity = new_cap;
+    }
+    list->params[list->count++] = param;
+}
+
 static void import_name_list_push(Arena* arena, ImportNameList* list, ImportName name) {
     if (list->count >= list->capacity) {
         size_t new_cap = list->capacity < 8 ? 8 : list->capacity * 2;
@@ -231,6 +244,48 @@ static Node* parse_const_decl(Parser* p, bool is_export);
 static Node* parse_func_decl(Parser* p, bool is_export);
 
 // ---------------------------------------------------------------------------
+// Generic parameter/argument parsers
+// ---------------------------------------------------------------------------
+
+// Parses [T, K, V] at declaration sites (type parameter names)
+static TypeParamList parse_type_params(Parser* p) {
+    TypeParamList params = {0};
+    advance(p); // consume '['
+    Token* name_tok = expect(p, TOKEN_IDENTIFIER, "Expected type parameter name.");
+    if (name_tok) {
+        TypeParam param = {0};
+        param.name = name_tok->value;
+        param.name_size = name_tok->size;
+        type_param_list_push(p->arena, &params, param);
+
+        while (match(p, TOKEN_COMMA)) {
+            name_tok = expect(p, TOKEN_IDENTIFIER, "Expected type parameter name.");
+            if (!name_tok) break;
+            TypeParam next = {0};
+            next.name = name_tok->value;
+            next.name_size = name_tok->size;
+            type_param_list_push(p->arena, &params, next);
+        }
+    }
+    expect(p, TOKEN_RIGHT_BRACKET, "Expected ']' after type parameters.");
+    return params;
+}
+
+// Parses [int, float] at usage sites (type arguments as type nodes)
+static NodeList parse_type_args(Parser* p) {
+    NodeList args = {0};
+    advance(p); // consume '['
+    Node* type_node = parse_type(p);
+    if (type_node) node_list_push(p->arena, &args, type_node);
+    while (match(p, TOKEN_COMMA)) {
+        type_node = parse_type(p);
+        if (type_node) node_list_push(p->arena, &args, type_node);
+    }
+    expect(p, TOKEN_RIGHT_BRACKET, "Expected ']' after type arguments.");
+    return args;
+}
+
+// ---------------------------------------------------------------------------
 // Type parser
 // ---------------------------------------------------------------------------
 
@@ -254,22 +309,35 @@ static Node* parse_type(Parser* p) {
         Node* node = make_node(p, NODE_TYPE_SIMPLE, tok);
         node->as.type_simple.name = tok->value;
         node->as.type_simple.name_size = tok->size;
+        memset(&node->as.type_simple.type_args, 0, sizeof(NodeList));
 
-        // check for array/slice suffix: T[N] or T[]
+        // check for array/slice/generic suffix
         if (check(p, TOKEN_LEFT_BRACKET)) {
-            Token* bracket_tok = advance(p);
-            if (check(p, TOKEN_RIGHT_BRACKET)) {
-                advance(p); // T[] -> slice
+            // Peek inside the bracket to disambiguate:
+            //   T[]      -> slice
+            //   T[N]     -> array (N is integer literal)
+            //   T[U,...] -> generic type args
+            size_t saved = p->pos;
+            Token* after = &p->tokens->tokens[saved + 1];
+            if (after->type == TOKEN_RIGHT_BRACKET) {
+                // T[] -> slice
+                Token* bracket_tok = advance(p); // consume '['
+                advance(p); // consume ']'
                 Node* slice_node = make_node(p, NODE_TYPE_SLICE, bracket_tok);
                 slice_node->as.type_slice.inner = node;
                 return slice_node;
-            } else {
-                Node* size_expr = parse_expression(p); // T[N] -> array
+            } else if (after->type == TOKEN_INTEGER_LITERAL) {
+                // T[N] -> array
+                Token* bracket_tok = advance(p); // consume '['
+                Node* size_expr = parse_expression(p);
                 expect(p, TOKEN_RIGHT_BRACKET, "Expected ']' after array size.");
                 Node* array_node = make_node(p, NODE_TYPE_ARRAY, bracket_tok);
                 array_node->as.type_array.inner = node;
                 array_node->as.type_array.size_expr = size_expr;
                 return array_node;
+            } else {
+                // Generic type arguments: List[int], Pair[int, float]
+                node->as.type_simple.type_args = parse_type_args(p);
             }
         }
 
@@ -407,9 +475,38 @@ static Node* parse_primary(Parser* p) {
     }
     case TOKEN_IDENTIFIER: {
         Token* name_tok = advance(p);
+
+        // Check for generic type args: Name[int, float](...)
+        NodeList type_args = {0};
+        if (check(p, TOKEN_LEFT_BRACKET)) {
+            // Lookahead: scan to matching ']', check if '(' follows
+            size_t scan = p->pos;
+            int depth = 0;
+            bool is_generic = false;
+            for (; scan < p->tokens->count; scan++) {
+                TokenType tt = p->tokens->tokens[scan].type;
+                if (tt == TOKEN_LEFT_BRACKET) depth++;
+                else if (tt == TOKEN_RIGHT_BRACKET) {
+                    depth--;
+                    if (depth == 0) {
+                        if (scan + 1 < p->tokens->count &&
+                            p->tokens->tokens[scan + 1].type == TOKEN_LEFT_PAREN)
+                            is_generic = true;
+                        break;
+                    }
+                }
+                else if (tt == TOKEN_NEWLINE || tt == TOKEN_END_OF_FILE) break;
+            }
+            if (is_generic) {
+                type_args = parse_type_args(p);
+            }
+        }
+
         if (check(p, TOKEN_LEFT_PAREN)) {
             if (is_struct_literal_lookahead(p)) {
-                return parse_struct_literal(p, name_tok);
+                Node* slit = parse_struct_literal(p, name_tok);
+                slit->as.struct_literal.type_args = type_args;
+                return slit;
             }
             // function call
             advance(p); // consume '('
@@ -418,6 +515,7 @@ static Node* parse_primary(Parser* p) {
             callee->as.identifier.name_size = name_tok->size;
             Node* node = make_node(p, NODE_CALL_EXPR, name_tok);
             node->as.call_expr.callee = callee;
+            node->as.call_expr.type_args = type_args;
             memset(&node->as.call_expr.args, 0, sizeof(NodeList));
             parse_args_into(p, &node->as.call_expr.args);
             expect(p, TOKEN_RIGHT_PAREN, "Expected ')' after arguments.");
@@ -952,6 +1050,11 @@ static Node* parse_func_decl(Parser* p, bool is_export) {
     Token* name_tok = expect(p, TOKEN_IDENTIFIER, "Expected function name.");
     if (!name_tok) return NULL;
 
+    TypeParamList type_params = {0};
+    if (check(p, TOKEN_LEFT_BRACKET)) {
+        type_params = parse_type_params(p);
+    }
+
     expect(p, TOKEN_LEFT_PAREN, "Expected '(' after function name.");
     ParamList params = parse_param_list(p);
     expect(p, TOKEN_RIGHT_PAREN, "Expected ')' after parameters.");
@@ -969,6 +1072,7 @@ static Node* parse_func_decl(Parser* p, bool is_export) {
     node->as.func_decl.is_export = is_export;
     node->as.func_decl.name = name_tok->value;
     node->as.func_decl.name_size = name_tok->size;
+    node->as.func_decl.type_params = type_params;
     node->as.func_decl.params = params;
     node->as.func_decl.return_type = return_type;
     node->as.func_decl.body = body;
@@ -1004,6 +1108,11 @@ static Node* parse_struct_decl(Parser* p, bool is_export) {
     Token* name_tok = expect(p, TOKEN_IDENTIFIER, "Expected struct name.");
     if (!name_tok) return NULL;
 
+    TypeParamList type_params = {0};
+    if (check(p, TOKEN_LEFT_BRACKET)) {
+        type_params = parse_type_params(p);
+    }
+
     expect_newline(p);
     skip_newlines(p);
 
@@ -1011,6 +1120,7 @@ static Node* parse_struct_decl(Parser* p, bool is_export) {
     node->as.struct_decl.is_export = is_export;
     node->as.struct_decl.name = name_tok->value;
     node->as.struct_decl.name_size = name_tok->size;
+    node->as.struct_decl.type_params = type_params;
     memset(&node->as.struct_decl.fields, 0, sizeof(FieldList));
     memset(&node->as.struct_decl.methods, 0, sizeof(NodeList));
 
