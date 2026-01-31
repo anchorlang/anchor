@@ -1,0 +1,21 @@
+# expect: 1
+var released = 0
+
+struct Resource
+    value: int
+
+    func release()
+        released = 1
+    end
+end
+
+func make_resource(): Resource
+    return Resource(value = 42)
+end
+
+func main(): int
+    with var r = make_resource()
+        var x = r.value
+    end
+    return released
+end

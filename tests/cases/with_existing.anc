@@ -1,0 +1,18 @@
+# expect: 1
+var released = 0
+
+struct Resource
+    value: int
+
+    func release()
+        released = 1
+    end
+end
+
+func main(): int
+    var r = Resource(value = 10)
+    with r
+        var x = r.value
+    end
+    return released
+end

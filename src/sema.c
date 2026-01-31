@@ -842,6 +842,11 @@ static Node* deep_copy_node(Arena* arena, Node* src, TypeSubst* subst) {
         dst->as.while_stmt.condition = deep_copy_node(arena, src->as.while_stmt.condition, subst);
         dst->as.while_stmt.body = deep_copy_node_list(arena, &src->as.while_stmt.body, subst);
         break;
+    case NODE_WITH_STMT:
+        dst->as.with_stmt.resource = deep_copy_node(arena, src->as.with_stmt.resource, subst);
+        dst->as.with_stmt.release = deep_copy_node(arena, src->as.with_stmt.release, subst);
+        dst->as.with_stmt.body = deep_copy_node_list(arena, &src->as.with_stmt.body, subst);
+        break;
     case NODE_MATCH_STMT:
         dst->as.match_stmt.subject = deep_copy_node(arena, src->as.match_stmt.subject, subst);
         dst->as.match_stmt.cases = deep_copy_match_case_list(arena, &src->as.match_stmt.cases, subst);
@@ -2209,6 +2214,137 @@ static void check_stmt(CheckContext* ctx, Node* node) {
         check_body(ctx, &node->as.while_stmt.body);
         ctx->real_loop_depth--;
         ctx->loop_depth--;
+        break;
+    }
+
+    case NODE_WITH_STMT: {
+        Node* res = node->as.with_stmt.resource;
+        Type* resource_type = NULL;
+
+        if (res->type == NODE_VAR_DECL) {
+            // "with var x = ..." — push scope so variable is visible in body
+            Scope* prev = ctx->scope;
+            scope_push(ctx);
+            check_stmt(ctx, res);  // registers variable in scope
+            resource_type = get_symbol_type(
+                scope_lookup(ctx, res->as.var_decl.name, res->as.var_decl.name_size));
+
+            if (!resource_type) {
+                check_body(ctx, &node->as.with_stmt.body);
+                scope_pop(ctx, prev);
+                break;
+            }
+
+            // Must be a struct (or &struct / *struct) with release() method
+            Type* struct_type = unwrap_to_struct(resource_type);
+            if (!struct_type) {
+                errors_push(ctx->errors, SEVERITY_ERROR, node->offset, node->line, node->column,
+                            "'with' requires a struct type, got '%s'", type_name(resource_type));
+                check_body(ctx, &node->as.with_stmt.body);
+                scope_pop(ctx, prev);
+                break;
+            }
+
+            // Find release() method: zero params, no generic type params
+            bool has_release = false;
+            NodeList* methods = struct_type->as.struct_type.methods;
+            for (size_t i = 0; i < methods->count; i++) {
+                Node* m = methods->nodes[i];
+                if (m->type == NODE_FUNC_DECL &&
+                    m->as.func_decl.name_size == 7 &&
+                    memcmp(m->as.func_decl.name, "release", 7) == 0 &&
+                    m->as.func_decl.params.count == 0 &&
+                    m->as.func_decl.type_params.count == 0) {
+                    has_release = true;
+                    break;
+                }
+            }
+
+            if (!has_release) {
+                errors_push(ctx->errors, SEVERITY_ERROR, node->offset, node->line, node->column,
+                            "struct '%s' has no release() method", type_name(struct_type));
+                check_body(ctx, &node->as.with_stmt.body);
+                scope_pop(ctx, prev);
+                break;
+            }
+
+            // Synthesize NODE_METHOD_CALL for release()
+            Node* release_call = arena_alloc(ctx->arena, sizeof(Node));
+            memset(release_call, 0, sizeof(Node));
+            release_call->type = NODE_METHOD_CALL;
+            release_call->offset = node->offset;
+            release_call->line = node->line;
+            release_call->column = node->column;
+
+            // Build an identifier node referencing the variable
+            Node* ident = arena_alloc(ctx->arena, sizeof(Node));
+            memset(ident, 0, sizeof(Node));
+            ident->type = NODE_IDENTIFIER;
+            ident->as.identifier.name = res->as.var_decl.name;
+            ident->as.identifier.name_size = res->as.var_decl.name_size;
+            ident->resolved_type = resource_type;
+
+            release_call->as.method_call.object = ident;
+            release_call->as.method_call.method_name = "release";
+            release_call->as.method_call.method_name_size = 7;
+
+            node->as.with_stmt.release = release_call;
+
+            check_body(ctx, &node->as.with_stmt.body);
+            scope_pop(ctx, prev);
+        } else {
+            // "with expr" — manage existing variable
+            resource_type = check_expr(ctx, res);
+
+            if (!resource_type) {
+                check_body(ctx, &node->as.with_stmt.body);
+                break;
+            }
+
+            Type* struct_type = unwrap_to_struct(resource_type);
+            if (!struct_type) {
+                errors_push(ctx->errors, SEVERITY_ERROR, node->offset, node->line, node->column,
+                            "'with' requires a struct type, got '%s'", type_name(resource_type));
+                check_body(ctx, &node->as.with_stmt.body);
+                break;
+            }
+
+            bool has_release = false;
+            NodeList* methods = struct_type->as.struct_type.methods;
+            for (size_t i = 0; i < methods->count; i++) {
+                Node* m = methods->nodes[i];
+                if (m->type == NODE_FUNC_DECL &&
+                    m->as.func_decl.name_size == 7 &&
+                    memcmp(m->as.func_decl.name, "release", 7) == 0 &&
+                    m->as.func_decl.params.count == 0 &&
+                    m->as.func_decl.type_params.count == 0) {
+                    has_release = true;
+                    break;
+                }
+            }
+
+            if (!has_release) {
+                errors_push(ctx->errors, SEVERITY_ERROR, node->offset, node->line, node->column,
+                            "struct '%s' has no release() method", type_name(struct_type));
+                check_body(ctx, &node->as.with_stmt.body);
+                break;
+            }
+
+            // Synthesize NODE_METHOD_CALL for release()
+            Node* release_call = arena_alloc(ctx->arena, sizeof(Node));
+            memset(release_call, 0, sizeof(Node));
+            release_call->type = NODE_METHOD_CALL;
+            release_call->offset = node->offset;
+            release_call->line = node->line;
+            release_call->column = node->column;
+            release_call->as.method_call.object = res;
+            release_call->as.method_call.method_name = "release";
+            release_call->as.method_call.method_name_size = 7;
+
+            node->as.with_stmt.release = release_call;
+
+            check_body(ctx, &node->as.with_stmt.body);
+        }
         break;
     }
 

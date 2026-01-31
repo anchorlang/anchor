@@ -1,0 +1,12 @@
+# expect_error: has no release() method
+struct NoRelease
+    value: int
+end
+
+func main(): int
+    var r = NoRelease(value = 1)
+    with r
+        var x = r.value
+    end
+    return 0
+end

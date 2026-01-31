@@ -1,0 +1,8 @@
+# expect_error: 'with' requires a struct type
+func main(): int
+    var x = 42
+    with x
+        var y = x + 1
+    end
+    return 0
+end

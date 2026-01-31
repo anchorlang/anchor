@@ -708,6 +708,21 @@ static void emit_stmt(CodeGen* gen, FILE* f, Node* node) {
         fprintf(f, "}\n");
         break;
 
+    case NODE_WITH_STMT:
+        // Emit the variable declaration if "with var x = ..."
+        if (node->as.with_stmt.resource->type == NODE_VAR_DECL) {
+            emit_stmt(gen, f, node->as.with_stmt.resource);
+        }
+        // Emit body
+        emit_body(gen, f, &node->as.with_stmt.body);
+        // Emit synthetic release() call
+        if (node->as.with_stmt.release) {
+            emit_indent(gen, f);
+            emit_expr(gen, f, node->as.with_stmt.release);
+            fprintf(f, ";\n");
+        }
+        break;
+
     case NODE_BREAK_STMT:
         emit_indent(gen, f);
         fprintf(f, "break;\n");

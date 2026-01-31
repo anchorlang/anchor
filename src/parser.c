@@ -222,7 +222,7 @@ static void synchronize(Parser* p) {
         if (t == TOKEN_FUNC || t == TOKEN_STRUCT || t == TOKEN_INTERFACE ||
             t == TOKEN_ENUM || t == TOKEN_CONST || t == TOKEN_VAR || t == TOKEN_EXPORT ||
             t == TOKEN_END || t == TOKEN_RETURN || t == TOKEN_IF ||
-            t == TOKEN_FOR || t == TOKEN_WHILE || t == TOKEN_BREAK || t == TOKEN_CONTINUE ||
+            t == TOKEN_FOR || t == TOKEN_WHILE || t == TOKEN_WITH || t == TOKEN_BREAK || t == TOKEN_CONTINUE ||
             t == TOKEN_MATCH || t == TOKEN_CASE || t == TOKEN_ELSE ||
             t == TOKEN_ELSEIF) {
             return;
@@ -853,6 +853,29 @@ static Node* parse_while_stmt(Parser* p) {
     return node;
 }
 
+static Node* parse_with_stmt(Parser* p) {
+    Token* tok = advance(p); // consume WITH
+
+    Node* resource = NULL;
+    if (check(p, TOKEN_VAR)) {
+        // "with var name = expr"
+        resource = parse_var_decl(p, false);
+    } else {
+        // "with expr"
+        resource = parse_expression(p);
+    }
+
+    expect_newline(p);
+    NodeList body = parse_body(p);
+    expect(p, TOKEN_END, "Expected 'end' to close with statement.");
+
+    Node* node = make_node(p, NODE_WITH_STMT, tok);
+    node->as.with_stmt.resource = resource;
+    node->as.with_stmt.release = NULL;
+    node->as.with_stmt.body = body;
+    return node;
+}
+
 static Node* parse_break_stmt(Parser* p) {
     Token* tok = advance(p); // consume BREAK
     return make_node(p, NODE_BREAK_STMT, tok);
@@ -953,6 +976,7 @@ static Node* parse_statement(Parser* p) {
     case TOKEN_IF:     return parse_if_stmt(p);
     case TOKEN_FOR:    return parse_for_stmt(p);
     case TOKEN_WHILE:  return parse_while_stmt(p);
+    case TOKEN_WITH:   return parse_with_stmt(p);
     case TOKEN_BREAK:    return parse_break_stmt(p);
     case TOKEN_CONTINUE: return parse_continue_stmt(p);
     case TOKEN_MATCH:    return parse_match_stmt(p);
@@ -1674,6 +1698,18 @@ void ast_print(Node* node, int indent) {
         printf("body:\n");
         for (size_t i = 0; i < node->as.while_stmt.body.count; i++) {
             ast_print(node->as.while_stmt.body.nodes[i], indent + 2);
+        }
+        break;
+
+    case NODE_WITH_STMT:
+        printf("WithStmt [%zu:%zu]\n", node->line, node->column);
+        print_indent(indent + 1);
+        printf("resource:\n");
+        ast_print(node->as.with_stmt.resource, indent + 2);
+        print_indent(indent + 1);
+        printf("body:\n");
+        for (size_t i = 0; i < node->as.with_stmt.body.count; i++) {
+            ast_print(node->as.with_stmt.body.nodes[i], indent + 2);
         }
         break;
 

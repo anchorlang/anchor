@@ -103,6 +103,7 @@ static void lexer_read_identifier_or_keyword(Lexer* lexer) {
         else if (strncmp(start, "null", 4) == 0)    type = TOKEN_NULL;
         else if (strncmp(start, "true", 4) == 0)    type = TOKEN_TRUE;
         else if (strncmp(start, "from", 4) == 0)    type = TOKEN_FROM;
+        else if (strncmp(start, "with", 4) == 0)    type = TOKEN_WITH;
         break;
     case 5:
         if (strncmp(start, "const", 5) == 0)        type = TOKEN_CONST;
@@ -349,6 +350,7 @@ void lexer_print(Tokens* tokens) {
         [TOKEN_UNTIL] = "UNTIL",
         [TOKEN_STEP] = "STEP",
         [TOKEN_WHILE] = "WHILE",
+        [TOKEN_WITH] = "WITH",
         [TOKEN_BREAK] = "BREAK",
         [TOKEN_CONTINUE] = "CONTINUE",
         [TOKEN_MATCH] = "MATCH",

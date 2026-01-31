@@ -25,6 +25,7 @@ typedef enum NodeType {
     NODE_IF_STMT,
     NODE_FOR_STMT,
     NODE_WHILE_STMT,
+    NODE_WITH_STMT,
     NODE_BREAK_STMT,
     NODE_CONTINUE_STMT,
     NODE_MATCH_STMT,
@@ -271,6 +272,12 @@ struct Node {
             Node* condition;
             NodeList body;
         } while_stmt;
+
+        struct {
+            Node* resource;   // NODE_VAR_DECL or expression (e.g. NODE_IDENTIFIER)
+            Node* release;    // synthetic NODE_METHOD_CALL, built by sema
+            NodeList body;
+        } with_stmt;
 
         struct {
             Node* subject;
