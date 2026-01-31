@@ -547,6 +547,58 @@ static bool is_lvalue(Node* node) {
     }
 }
 
+// Returns true if `from` can be implicitly converted to `to`.
+// `value_node` is the source expression (needed for integer literal check), may be NULL.
+static bool types_compatible(CheckContext* ctx, Type* to, Type* from, Node* value_node) {
+    if (type_equals(to, from)) return true;
+
+    // *void (null) -> any *T
+    if (from->kind == TYPE_PTR && from->as.ptr_type.inner->kind == TYPE_VOID &&
+        to->kind == TYPE_PTR) return true;
+
+    // any *T or &T -> *void
+    if (to->kind == TYPE_PTR && to->as.ptr_type.inner->kind == TYPE_VOID &&
+        (from->kind == TYPE_PTR || from->kind == TYPE_REF)) return true;
+
+    // &T -> *T (references are always valid pointers)
+    if (from->kind == TYPE_REF && to->kind == TYPE_PTR &&
+        type_equals(from->as.ref_type.inner, to->as.ptr_type.inner)) return true;
+
+    // integer literal coercion to any integer type
+    if (type_is_integer(to) && type_is_integer(from) &&
+        value_node && value_node->type == NODE_INTEGER_LITERAL) return true;
+
+    // integer widening (smaller -> larger rank)
+    if (type_is_integer(to) && type_is_integer(from) &&
+        type_integer_convertible(from, to)) return true;
+
+    // array -> slice (T[N] -> T[])
+    if (to->kind == TYPE_SLICE && from->kind == TYPE_ARRAY &&
+        type_equals(to->as.slice_type.element, from->as.array_type.element)) return true;
+
+    return false;
+}
+
+// Check if `from` can satisfy `to` via interface satisfaction.
+// Registers impl pair as a side effect. Reports error if struct doesn't satisfy.
+// Returns true if interface check was applicable (even if it failed).
+static bool check_iface_compat(CheckContext* ctx, Type* to, Type* from, Node* error_node) {
+    Type* iface = unwrap_to_interface(to);
+    Type* struc = unwrap_to_struct(from);
+    if (iface && struc) {
+        if (check_interface_satisfaction(ctx, struc, iface)) {
+            impl_pair_add(ctx->mod, struc, iface, struc->as.struct_type.module);
+            return true;
+        }
+        errors_push(ctx->errors, SEVERITY_ERROR, error_node->offset,
+                    error_node->line, error_node->column,
+                    "struct '%s' does not satisfy interface '%s'",
+                    type_name(struc), type_name(iface));
+        return true; // already reported
+    }
+    return false;
+}
+
 static Type* check_expr(CheckContext* ctx, Node* node);
 static void check_stmt(CheckContext* ctx, Node* node);
 static void check_body(CheckContext* ctx, NodeList* body);
@@ -895,6 +947,25 @@ static TypeSubst build_subst(Arena* arena, TypeParamList* params, Type** type_ar
 // forward declaration — needed because instantiate_generic_struct and resolve_generic_type are mutually recursive
 static Type* resolve_generic_type(CheckContext* ctx, Node* type_node);
 
+// Register a generic instantiation and add it to the module's inst list.
+static GenericInst* register_generic_inst(CheckContext* ctx, Node* template_decl,
+    Type** type_args, size_t type_arg_count,
+    char* mangled, size_t mangled_size,
+    Node* mono, Type* resolved_type) {
+    GenericInst* inst = arena_alloc(ctx->arena, sizeof(GenericInst));
+    inst->next = NULL;
+    inst->template_decl = template_decl;
+    inst->type_args = arena_alloc(ctx->arena, sizeof(Type*) * type_arg_count);
+    memcpy(inst->type_args, type_args, sizeof(Type*) * type_arg_count);
+    inst->type_arg_count = type_arg_count;
+    inst->mangled_name = mangled;
+    inst->mangled_name_size = mangled_size;
+    inst->mono_decl = mono;
+    inst->resolved_type = resolved_type;
+    generic_inst_add(ctx->arena, ctx->mod, inst);
+    return inst;
+}
+
 // Instantiate a generic struct with concrete type arguments.
 // Returns the resolved Type* for the instantiation.
 static Type* instantiate_generic_struct(CheckContext* ctx, Node* template_decl,
@@ -934,17 +1005,8 @@ static Type* instantiate_generic_struct(CheckContext* ctx, Node* template_decl,
 
     // register the instantiation BEFORE resolving fields to break self-referential cycles
     // (e.g. struct Node[T] { next: *Node[T] } — resolving *Node[int] re-enters instantiate_generic_struct)
-    GenericInst* inst = arena_alloc(ctx->arena, sizeof(GenericInst));
-    inst->next = NULL;
-    inst->template_decl = template_decl;
-    inst->type_args = arena_alloc(ctx->arena, sizeof(Type*) * type_arg_count);
-    memcpy(inst->type_args, type_args, sizeof(Type*) * type_arg_count);
-    inst->type_arg_count = type_arg_count;
-    inst->mangled_name = mangled;
-    inst->mangled_name_size = mangled_size;
-    inst->mono_decl = mono;
-    inst->resolved_type = t;
-    generic_inst_add(ctx->arena, ctx->mod, inst);
+    register_generic_inst(ctx, template_decl, type_args, type_arg_count,
+                          mangled, mangled_size, mono, t);
 
     // add a symbol for the monomorphized struct so codegen can find it
     symbol_add(ctx->arena, ctx->mod->symbols, SYMBOL_STRUCT, mangled, mangled_size,
@@ -1025,17 +1087,8 @@ static Type* instantiate_generic_func(CheckContext* ctx, Node* template_decl,
     mono->resolved_type = func_t;
 
     // register the instantiation
-    GenericInst* inst = arena_alloc(ctx->arena, sizeof(GenericInst));
-    inst->next = NULL;
-    inst->template_decl = template_decl;
-    inst->type_args = arena_alloc(ctx->arena, sizeof(Type*) * type_arg_count);
-    memcpy(inst->type_args, type_args, sizeof(Type*) * type_arg_count);
-    inst->type_arg_count = type_arg_count;
-    inst->mangled_name = mangled;
-    inst->mangled_name_size = mangled_size;
-    inst->mono_decl = mono;
-    inst->resolved_type = func_t;
-    generic_inst_add(ctx->arena, ctx->mod, inst);
+    register_generic_inst(ctx, template_decl, type_args, type_arg_count,
+                          mangled, mangled_size, mono, func_t);
 
     // add a symbol for the monomorphized function
     symbol_add(ctx->arena, ctx->mod->symbols, SYMBOL_FUNC, mangled, mangled_size,
@@ -1127,17 +1180,8 @@ static Type* instantiate_generic_method(CheckContext* ctx, Node* template_decl,
     mono->resolved_type = func_t;
 
     // register the instantiation
-    GenericInst* inst = arena_alloc(ctx->arena, sizeof(GenericInst));
-    inst->next = NULL;
-    inst->template_decl = template_decl;
-    inst->type_args = arena_alloc(ctx->arena, sizeof(Type*) * type_arg_count);
-    memcpy(inst->type_args, type_args, sizeof(Type*) * type_arg_count);
-    inst->type_arg_count = type_arg_count;
-    inst->mangled_name = mangled;
-    inst->mangled_name_size = mangled_size;
-    inst->mono_decl = mono;
-    inst->resolved_type = func_t;
-    generic_inst_add(ctx->arena, ctx->mod, inst);
+    register_generic_inst(ctx, template_decl, type_args, type_arg_count,
+                          mangled, mangled_size, mono, func_t);
 
     // add a symbol for the monomorphized function
     symbol_add(ctx->arena, ctx->mod->symbols, SYMBOL_FUNC, mangled, mangled_size,
@@ -1554,45 +1598,8 @@ static Type* check_expr(CheckContext* ctx, Node* node) {
             Type* arg_type = check_expr(ctx, args->nodes[i]);
             if (!arg_type) continue;
             Type* param_type = callee_type->as.func_type.param_types[i];
-            if (param_type && !type_equals(arg_type, param_type)) {
-                bool compatible = false;
-                // allow &Struct where &Interface is expected (with satisfaction check)
-                Type* param_iface = unwrap_to_interface(param_type);
-                Type* arg_struct = unwrap_to_struct(arg_type);
-                if (param_iface && arg_struct) {
-                    if (check_interface_satisfaction(ctx, arg_struct, param_iface)) {
-                        compatible = true;
-                        impl_pair_add(ctx->mod, arg_struct, param_iface,
-                                      arg_struct->as.struct_type.module);
-                    } else {
-                        errors_push(ctx->errors, SEVERITY_ERROR, args->nodes[i]->offset,
-                                    args->nodes[i]->line, args->nodes[i]->column,
-                                    "struct '%s' does not satisfy interface '%s'",
-                                    type_name(arg_struct), type_name(param_iface));
-                        compatible = true; // already reported
-                    }
-                }
-                // allow *void (null) where any pointer is expected
-                if (arg_type->kind == TYPE_PTR && arg_type->as.ptr_type.inner->kind == TYPE_VOID &&
-                    param_type->kind == TYPE_PTR) {
-                    compatible = true;
-                }
-                // allow any *T or &T where *void is expected
-                if (param_type->kind == TYPE_PTR && param_type->as.ptr_type.inner->kind == TYPE_VOID &&
-                    (arg_type->kind == TYPE_PTR || arg_type->kind == TYPE_REF)) {
-                    compatible = true;
-                }
-                // allow &T where *T is expected (references are always valid)
-                if (arg_type->kind == TYPE_REF && param_type->kind == TYPE_PTR &&
-                    type_equals(arg_type->as.ref_type.inner, param_type->as.ptr_type.inner)) {
-                    compatible = true;
-                }
-                // allow integer literal coercion to any integer type
-                if (type_is_integer(param_type) && type_is_integer(arg_type) &&
-                    args->nodes[i]->type == NODE_INTEGER_LITERAL) {
-                    compatible = true;
-                }
-                if (!compatible) {
+            if (param_type && !types_compatible(ctx, param_type, arg_type, args->nodes[i])) {
+                if (!check_iface_compat(ctx, param_type, arg_type, args->nodes[i])) {
                     errors_push(ctx->errors, SEVERITY_ERROR, args->nodes[i]->offset,
                                 args->nodes[i]->line, args->nodes[i]->column,
                                 "argument %d: expected '%s', got '%s'",
@@ -1897,23 +1904,8 @@ static Type* check_expr(CheckContext* ctx, Node* node) {
                     if (val_type) {
                         Type* field_type = resolve_type_node(ctx->reg, ctx->errors,
                                                               ctx->mod->symbols, f->type_node);
-                        if (field_type && !type_equals(val_type, field_type)) {
-                            // allow pointer coercions
-                            bool compatible = false;
-                            if (val_type->kind == TYPE_PTR && val_type->as.ptr_type.inner->kind == TYPE_VOID &&
-                                field_type->kind == TYPE_PTR) {
-                                compatible = true;
-                            }
-                            if (field_type->kind == TYPE_PTR && field_type->as.ptr_type.inner->kind == TYPE_VOID &&
-                                (val_type->kind == TYPE_PTR || val_type->kind == TYPE_REF)) {
-                                compatible = true;
-                            }
-                            // allow integer literal coercion to any integer type
-                            if (type_is_integer(field_type) && type_is_integer(val_type) &&
-                                fi->value->type == NODE_INTEGER_LITERAL) {
-                                compatible = true;
-                            }
-                            if (!compatible) {
+                        if (field_type && !types_compatible(ctx, field_type, val_type, fi->value)) {
+                            if (!check_iface_compat(ctx, field_type, val_type, fi->value)) {
                                 errors_push(ctx->errors, SEVERITY_ERROR, fi->offset, fi->line, fi->column,
                                             "field '%.*s': expected '%s', got '%s'",
                                             (int)fi->name_size, fi->name,
@@ -2042,59 +2034,9 @@ static void check_stmt(CheckContext* ctx, Node* node) {
             break;
         }
 
-        if (declared_type && init_type && !type_equals(declared_type, init_type)) {
-            bool compatible = false;
-            // allow null (*void) assigned to any pointer type
-            if (init_type->kind == TYPE_PTR && init_type->as.ptr_type.inner->kind == TYPE_VOID &&
-                declared_type->kind == TYPE_PTR) {
-                compatible = true;
-            }
-            // allow any *T or &T assigned to *void
-            if (declared_type->kind == TYPE_PTR && declared_type->as.ptr_type.inner->kind == TYPE_VOID &&
-                (init_type->kind == TYPE_PTR || init_type->kind == TYPE_REF)) {
-                compatible = true;
-            }
-            // allow integer conversions (C99-style)
-            if (type_is_integer(declared_type) && type_is_integer(init_type)) {
-                // integer literals can be assigned to any integer type
-                if (node->as.var_decl.value &&
-                    node->as.var_decl.value->type == NODE_INTEGER_LITERAL) {
-                    compatible = true;
-                }
-                // widening conversions (smaller -> larger rank) always allowed
-                else if (type_integer_convertible(init_type, declared_type)) {
-                    compatible = true;
-                }
-            }
-            // allow &Struct where &Interface is expected (with satisfaction check)
-            Type* decl_iface = unwrap_to_interface(declared_type);
-            Type* init_struct = unwrap_to_struct(init_type);
-            if (decl_iface && init_struct) {
-                if (check_interface_satisfaction(ctx, init_struct, decl_iface)) {
-                    compatible = true;
-                    impl_pair_add(ctx->mod, init_struct, decl_iface,
-                                  init_struct->as.struct_type.module);
-                } else {
-                    errors_push(ctx->errors, SEVERITY_ERROR, node->offset, node->line, node->column,
-                                "struct '%s' does not satisfy interface '%s'",
-                                type_name(init_struct), type_name(decl_iface));
-                    compatible = true; // already reported
-                }
-            }
-            // allow &T -> *T (references are always valid, safe to use as pointer)
-            if (declared_type->kind == TYPE_PTR && init_type->kind == TYPE_REF) {
-                if (type_equals(declared_type->as.ptr_type.inner, init_type->as.ref_type.inner)) {
-                    compatible = true;
-                }
-            }
-            // allow array-to-slice conversion: T[N] -> T[]
-            if (declared_type->kind == TYPE_SLICE && init_type->kind == TYPE_ARRAY) {
-                if (type_equals(declared_type->as.slice_type.element,
-                                init_type->as.array_type.element)) {
-                    compatible = true;
-                }
-            }
-            if (!compatible) {
+        if (declared_type && init_type &&
+            !types_compatible(ctx, declared_type, init_type, node->as.var_decl.value)) {
+            if (!check_iface_compat(ctx, declared_type, init_type, node)) {
                 errors_push(ctx->errors, SEVERITY_ERROR, node->offset, node->line, node->column,
                             "variable '%.*s': declared as '%s' but initialized with '%s'",
                             (int)node->as.var_decl.name_size, node->as.var_decl.name,
@@ -2153,29 +2095,8 @@ static void check_stmt(CheckContext* ctx, Node* node) {
                 errors_push(ctx->errors, SEVERITY_ERROR, node->offset, node->line, node->column,
                             "return with value in void function");
             } else if (val && ctx->return_type) {
-                if (!type_equals(val, ctx->return_type)) {
-                    // allow integer conversions (C99-style)
-                    bool compatible = false;
-                    if (type_is_integer(val) && type_is_integer(ctx->return_type)) {
-                        // integer literals can convert to any integer type
-                        if (node->as.return_stmt.value->type == NODE_INTEGER_LITERAL) {
-                            compatible = true;
-                        }
-                        // widening conversions always allowed
-                        else if (type_integer_convertible(val, ctx->return_type)) {
-                            compatible = true;
-                        }
-                    }
-                    // allow *void coercions in returns
-                    if (val->kind == TYPE_PTR && val->as.ptr_type.inner->kind == TYPE_VOID &&
-                        ctx->return_type->kind == TYPE_PTR) {
-                        compatible = true;
-                    }
-                    if (ctx->return_type->kind == TYPE_PTR && ctx->return_type->as.ptr_type.inner->kind == TYPE_VOID &&
-                        (val->kind == TYPE_PTR || val->kind == TYPE_REF)) {
-                        compatible = true;
-                    }
-                    if (!compatible) {
+                if (!types_compatible(ctx, ctx->return_type, val, node->as.return_stmt.value)) {
+                    if (!check_iface_compat(ctx, ctx->return_type, val, node)) {
                         errors_push(ctx->errors, SEVERITY_ERROR, node->offset, node->line, node->column,
                                     "return type mismatch: expected '%s', got '%s'",
                                     type_name(ctx->return_type), type_name(val));
@@ -2368,31 +2289,9 @@ static void check_stmt(CheckContext* ctx, Node* node) {
         }
         Type* target = check_expr(ctx, node->as.assign_stmt.target);
         Type* value = check_expr(ctx, node->as.assign_stmt.value);
-        if (target && value && !type_equals(target, value)) {
-            bool compatible = false;
-            // allow null assigned to pointer
-            if (value->kind == TYPE_PTR && value->as.ptr_type.inner->kind == TYPE_VOID &&
-                target->kind == TYPE_PTR) {
-                compatible = true;
-            }
-            // allow any *T or &T assigned to *void
-            if (target->kind == TYPE_PTR && target->as.ptr_type.inner->kind == TYPE_VOID &&
-                (value->kind == TYPE_PTR || value->kind == TYPE_REF)) {
-                compatible = true;
-            }
-            // allow &T assigned to *T (taking address into pointer)
-            if (value->kind == TYPE_REF && target->kind == TYPE_PTR) {
-                compatible = true;
-            }
-            // allow integer widening conversions and literal assignments
-            if (type_is_integer(target) && type_is_integer(value)) {
-                if (node->as.assign_stmt.value->type == NODE_INTEGER_LITERAL) {
-                    compatible = true;
-                } else if (type_integer_convertible(value, target)) {
-                    compatible = true;
-                }
-            }
-            if (!compatible) {
+        if (target && value &&
+            !types_compatible(ctx, target, value, node->as.assign_stmt.value)) {
+            if (!check_iface_compat(ctx, target, value, node)) {
                 errors_push(ctx->errors, SEVERITY_ERROR, node->offset, node->line, node->column,
                             "assignment type mismatch: expected '%s', got '%s'",
                             type_name(target), type_name(value));
@@ -2423,20 +2322,11 @@ static void check_stmt(CheckContext* ctx, Node* node) {
             errors_push(ctx->errors, SEVERITY_ERROR, node->offset, node->line, node->column,
                         "compound assignment target must be numeric, got '%s'", type_name(target));
         }
-        if (target && value && !type_equals(target, value)) {
-            bool compatible = false;
-            if (type_is_integer(target) && type_is_integer(value)) {
-                if (node->as.compound_assign_stmt.value->type == NODE_INTEGER_LITERAL) {
-                    compatible = true;
-                } else if (type_integer_convertible(value, target)) {
-                    compatible = true;
-                }
-            }
-            if (!compatible) {
-                errors_push(ctx->errors, SEVERITY_ERROR, node->offset, node->line, node->column,
-                            "compound assignment type mismatch: '%s' vs '%s'",
-                            type_name(target), type_name(value));
-            }
+        if (target && value &&
+            !types_compatible(ctx, target, value, node->as.compound_assign_stmt.value)) {
+            errors_push(ctx->errors, SEVERITY_ERROR, node->offset, node->line, node->column,
+                        "compound assignment type mismatch: '%s' vs '%s'",
+                        type_name(target), type_name(value));
         }
         break;
     }
@@ -2467,6 +2357,11 @@ static void check_func_body(CheckContext* ctx, Node* func_node) {
 
     ctx->return_type = func_type->as.func_type.return_type;
 
+    int prev_loop = ctx->loop_depth;
+    int prev_real_loop = ctx->real_loop_depth;
+    ctx->loop_depth = 0;
+    ctx->real_loop_depth = 0;
+
     Scope* prev = ctx->scope;
     scope_push(ctx);
 
@@ -2484,6 +2379,8 @@ static void check_func_body(CheckContext* ctx, Node* func_node) {
     }
 
     scope_pop(ctx, prev);
+    ctx->loop_depth = prev_loop;
+    ctx->real_loop_depth = prev_real_loop;
     ctx->return_type = NULL;
 }
 
