@@ -10,4 +10,7 @@ int os_cmd_run(const char* cmd, char* output, size_t output_cap);
 // Write the system temp directory path into buf. Returns false on failure.
 bool os_tmp_dir(char* buf, size_t buf_cap);
 
+// Write the current working directory path into buf. Returns false on failure.
+bool os_cwd(char* buf, size_t buf_cap);
+
 #endif

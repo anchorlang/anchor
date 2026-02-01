@@ -6,6 +6,8 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#else
+#include <unistd.h>
 #endif
 
 int os_cmd_run(const char* cmd, char* output, size_t output_cap) {
@@ -31,6 +33,16 @@ int os_cmd_run(const char* cmd, char* output, size_t output_cap) {
     return _pclose(proc);
 #else
     return pclose(proc);
+#endif
+}
+
+bool os_cwd(char* buf, size_t buf_cap) {
+#ifdef _WIN32
+    DWORD len = GetCurrentDirectoryA((DWORD)buf_cap, buf);
+    if (len == 0 || len >= buf_cap) return false;
+    return true;
+#else
+    return getcwd(buf, buf_cap) != NULL;
 #endif
 }
 

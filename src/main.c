@@ -21,6 +21,7 @@ int main(int argc, char** argv) {
         fprintf(stderr,
             "Usage: ancc <command> [options]\n"
             "Commands:\n"
+            "  ancc init [name]     Create a new project.\n"
             "  ancc build [dir]     Build package.\n"
             "  ancc run <file>      Compile and run a file.\n"
             "  ancc lsp [dir]       Run LSP mode.\n"
@@ -264,6 +265,68 @@ int main(int argc, char** argv) {
     if (strcmp(argv[1], "lsp") == 0) {
         char* dir = argc >= 3 ? argv[2] : ".";
         lsp_server_run(dir);
+        return EXIT_SUCCESS;
+    }
+
+    if (strcmp(argv[1], "init") == 0) {
+        char dir[1024];
+        char name[256];
+
+        if (argc >= 3) {
+            // ancc init myproject — create a new directory
+            snprintf(name, sizeof(name), "%s", argv[2]);
+            snprintf(dir, sizeof(dir), "%s", argv[2]);
+        } else {
+            // ancc init — scaffold in current directory, derive name from cwd
+            if (!os_cwd(dir, sizeof(dir))) {
+                fprintf(stderr, "error: cannot determine current directory\n");
+                return EXIT_FAILURE;
+            }
+            // Extract basename from cwd
+            char* last_sep = NULL;
+            for (char* p = dir; *p; p++) {
+                if (*p == '/' || *p == '\\') last_sep = p;
+            }
+            snprintf(name, sizeof(name), "%s", last_sep ? last_sep + 1 : dir);
+            dir[0] = '.';
+            dir[1] = '\0';
+        }
+
+        // Check if anchor manifest already exists
+        char anchor_path[1024];
+        snprintf(anchor_path, sizeof(anchor_path), "%s/anchor", dir);
+        if (file_exists(anchor_path)) {
+            fprintf(stderr, "error: project already exists ('%s')\n", anchor_path);
+            return EXIT_FAILURE;
+        }
+
+        // Create project directory and src/
+        dir_ensure(dir);
+        char src_dir[1024];
+        snprintf(src_dir, sizeof(src_dir), "%s/src", dir);
+        dir_ensure(src_dir);
+
+        // Write anchor manifest
+        FILE* f = fopen(anchor_path, "w");
+        if (!f) {
+            fprintf(stderr, "error: cannot create '%s'\n", anchor_path);
+            return EXIT_FAILURE;
+        }
+        fprintf(f, "name %s\nentry main\n", name);
+        fclose(f);
+
+        // Write src/main.anc
+        char main_path[1024];
+        snprintf(main_path, sizeof(main_path), "%s/src/main.anc", dir);
+        f = fopen(main_path, "w");
+        if (!f) {
+            fprintf(stderr, "error: cannot create '%s'\n", main_path);
+            return EXIT_FAILURE;
+        }
+        fprintf(f, "func main(): int\n    return 0\nend\n");
+        fclose(f);
+
+        printf("Created project '%s'\n", name);
         return EXIT_SUCCESS;
     }
 
