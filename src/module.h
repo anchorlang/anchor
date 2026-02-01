@@ -55,6 +55,11 @@ typedef struct ModuleGraph {
     Module* first;
     Module* last;
     int count;
+
+    // Source override for LSP (analyze unsaved buffer instead of disk file)
+    char* override_path;
+    char* override_source;
+    size_t override_source_len;
 } ModuleGraph;
 
 void module_graph_init(ModuleGraph* graph, Arena* arena, Errors* errors, char* src_dir);

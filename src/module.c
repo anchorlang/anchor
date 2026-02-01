@@ -13,6 +13,9 @@ void module_graph_init(ModuleGraph* graph, Arena* arena, Errors* errors, char* s
     graph->first = NULL;
     graph->last = NULL;
     graph->count = 0;
+    graph->override_path = NULL;
+    graph->override_source = NULL;
+    graph->override_source_len = 0;
 }
 
 Module* module_find(ModuleGraph* graph, char* path) {
@@ -98,9 +101,15 @@ Module* module_resolve(ModuleGraph* graph, char* module_path, size_t module_path
     Module* existing = module_find(graph, file_path);
     if (existing) return existing;
 
-    // read file
+    // read file (or use override for LSP)
     size_t source_size;
-    char* source = file_read(graph->arena, file_path, &source_size);
+    char* source;
+    if (graph->override_path && strcmp(file_path, graph->override_path) == 0) {
+        source = graph->override_source;
+        source_size = graph->override_source_len;
+    } else {
+        source = file_read(graph->arena, file_path, &source_size);
+    }
     if (!source) {
         errors_push(graph->errors, SEVERITY_ERROR, 0, 0, 0, "cannot open module '%s'", file_path);
         return NULL;

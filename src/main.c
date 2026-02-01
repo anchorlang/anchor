@@ -9,6 +9,7 @@
 #include "compile.h"
 #include "os.h"
 #include "error.h"
+#include "lsp_server.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -258,6 +259,12 @@ int main(int argc, char** argv) {
 
         arena_free(&arena);
         return status;
+    }
+
+    if (strcmp(argv[1], "lsp") == 0) {
+        char* dir = argc >= 3 ? argv[2] : ".";
+        lsp_server_run(dir);
+        return EXIT_SUCCESS;
     }
 
     fprintf(stderr, "Error: Unknown command '%s'.\n", argv[1]);
